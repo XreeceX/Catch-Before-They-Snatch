@@ -664,59 +664,61 @@ export class GameEngine {
     }
   }
 
-  /** A flat bridge deck across the river, connecting the play area to the far
-   *  bank, with railings, balusters and support piers in the water. */
+  /** A clean stone bridge deck across the river at walking height, with solid
+   *  parapet walls, baluster detailing and support piers. Built procedurally so
+   *  the deck sits exactly at the player's foot level regardless of any model
+   *  proportions (a multi-arch model can't fit this flat, fixed-height world). */
   private buildBridge(nearZ: number, farZ: number, half: number): void {
     const span = farZ - nearZ + 6;
     const centerZ = (nearZ + farZ) / 2;
+    const DECK_TOP = 0.32; // top surface of the walkable deck
 
-    // Flat walkable deck slab at ground level so the fixed-height player always
-    // has a clear surface to cross on, regardless of the decorative model.
-    const deck = new THREE.Mesh(
-      new THREE.BoxGeometry(half * 2, 0.4, span),
-      new THREE.MeshStandardMaterial({ color: 0x9a9389, roughness: 0.9 }),
-    );
-    deck.position.set(0, 0.12, centerZ);
+    const stoneMat = new THREE.MeshStandardMaterial({ color: 0xa9a394, roughness: 0.95 });
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0x8a8273, roughness: 0.9 });
+
+    // Walkable stone deck slab — top at DECK_TOP so the player crosses on it.
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(half * 2, 0.4, span), stoneMat);
+    deck.position.set(0, DECK_TOP - 0.2, centerZ);
     deck.receiveShadow = true;
     this.streetGroup.add(deck);
 
-    // Generated stone bridge (decorative structure: arches under, railings on
-    // the sides). Sunk so its deck roughly aligns with the flat walking slab.
-    if (this.propModels.has("bridge")) {
-      const model = this.propModels.create("bridge");
-      if (model) {
-        const dims = this.propModels.dims("bridge");
-        // Rotate so the longest (deck) axis runs along z (the crossing).
-        if (dims.z < dims.x) model.rotation.y = Math.PI / 2;
-        // Sink the structure so only the side railings (~1.5m) rise above the
-        // flat walking slab; the arches/deck dip below, so the player walks on
-        // top of the bridge instead of appearing buried inside it.
-        const railTop = 1.5;
-        model.position.set(0, railTop - dims.y, centerZ);
-        this.streetGroup.add(model);
-        return;
-      }
-    }
-
-    // Procedural fallback railings + piers.
-    const railMat = new THREE.MeshStandardMaterial({ color: 0x2f3640, metalness: 0.6, roughness: 0.5 });
-    const balusters = 12;
+    // Solid parapet walls on both sides, with a flat cap rail and balusters.
+    const wallH = 0.85;
+    const capMat = new THREE.MeshStandardMaterial({ color: 0x6f6a5d, roughness: 0.85 });
+    const balusters = Math.max(8, Math.round(span / 2));
     for (const sx of [-1, 1]) {
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.18, span), railMat);
-      rail.position.set(sx * half, 1.7, centerZ);
-      this.streetGroup.add(rail);
-      for (let i = 0; i <= balusters; i++) {
-        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.95, 6), railMat);
-        post.position.set(sx * half, 1.25, centerZ - span / 2 + (span / balusters) * i);
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(0.4, wallH, span), trimMat);
+      wall.position.set(sx * (half - 0.2), DECK_TOP + wallH / 2, centerZ);
+      wall.castShadow = true;
+      wall.receiveShadow = true;
+      this.streetGroup.add(wall);
+
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.18, span), capMat);
+      cap.position.set(sx * (half - 0.2), DECK_TOP + wallH + 0.09, centerZ);
+      this.streetGroup.add(cap);
+
+      // raised newel posts at the bridge ends
+      for (const ez of [nearZ - 2, farZ + 2]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.9, wallH + 0.7, 0.9), capMat);
+        post.position.set(sx * (half - 0.2), DECK_TOP + (wallH + 0.7) / 2, ez);
+        post.castShadow = true;
         this.streetGroup.add(post);
       }
+
+      // baluster detailing along the wall face
+      for (let i = 0; i <= balusters; i++) {
+        const b = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, wallH * 0.7, 6), capMat);
+        b.position.set(sx * (half - 0.05), DECK_TOP + wallH * 0.35, centerZ - span / 2 + (span / balusters) * i);
+        this.streetGroup.add(b);
+      }
     }
 
+    // Support piers dipping toward the waterline on the bridge flanks.
     const pierMat = new THREE.MeshStandardMaterial({ color: 0x6b6457, roughness: 1 });
     for (const pz of [nearZ + span * 0.25, centerZ, farZ - span * 0.25]) {
       for (const sx of [-1, 1]) {
         const pier = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.95, 3, 10), pierMat);
-        pier.position.set(sx * (half - 0.8), -0.6, pz);
+        pier.position.set(sx * (half - 0.6), -1.2, pz);
         pier.castShadow = true;
         this.streetGroup.add(pier);
       }

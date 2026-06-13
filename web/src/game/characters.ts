@@ -29,6 +29,8 @@ interface ModelDef {
   localUpAxis: AxisKey;
   /** Target rendered height in metres. */
   height: number;
+  /** Perceived gender of the look — drives the scream voice on snatch. */
+  gender: "male" | "female";
 }
 
 /* === Generated asset URLs (filled in after Meshy generation) === */
@@ -40,8 +42,9 @@ const COP = `${R2}/26944834-1b4f-428c-9055-b28d59b91a45`;
 const PED2 = `${R2}/5ffe3f1a-dded-4781-9ab6-77be7e49d7dc`;
 const PED3 = `${R2}/0b944e2d-d282-4d75-b779-bf6b18a39184`;
 
-function pedDef(base: string, height: number): ModelDef {
+function pedDef(base: string, height: number, gender: "male" | "female"): ModelDef {
   return {
+    gender,
     rigged: `${base}-rigged.glb`,
     idle: `${base}-anim-idle.glb`,
     walk: `${base}-anim-casual-walk-inplace.glb`,
@@ -60,12 +63,13 @@ function pedDef(base: string, height: number): ModelDef {
 /** Every interchangeable civilian look. The engine picks one at random per
  *  person, so snatchers and civilians are visually indistinguishable. */
 const PEDESTRIAN_VARIANTS: ModelDef[] = [
-  pedDef(PED, 1.8),
-  pedDef(PED2, 1.72),
-  pedDef(PED3, 1.82),
+  pedDef(PED, 1.8, "male"),
+  pedDef(PED2, 1.72, "female"),
+  pedDef(PED3, 1.82, "male"),
 ];
 
 const POLICE: ModelDef = {
+  gender: "male",
   rigged: `${COP}-rigged.glb`,
   idle: `${COP}-anim-idle.glb`,
   walk: `${COP}-anim-casual-walk-inplace.glb`,
@@ -388,5 +392,24 @@ export class CharacterModels {
         : Math.floor(Math.random() * this.pedestrians.length);
     const m = this.pedestrians[idx];
     return new CharacterInstance(m.tpl, m.def);
+  }
+
+  /** Gender of the look a given `variant` index resolves to (for scream SFX).
+   *  Mirrors create()'s index math so the voice matches the visible model. */
+  genderForVariant(variant?: number): "male" | "female" {
+    if (this.pedestrians.length === 0) {
+      // Models not loaded yet — fall back to the declared variant table.
+      const defs = PEDESTRIAN_VARIANTS;
+      const i =
+        variant !== undefined
+          ? ((variant % defs.length) + defs.length) % defs.length
+          : 0;
+      return defs[i].gender;
+    }
+    const idx =
+      variant !== undefined
+        ? ((variant % this.pedestrians.length) + this.pedestrians.length) % this.pedestrians.length
+        : 0;
+    return this.pedestrians[idx].def.gender;
   }
 }

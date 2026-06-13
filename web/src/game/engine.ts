@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { CharacterModels, CharacterInstance, CharKind } from "./characters";
 import { PropModels } from "./props";
+import { AudioManager } from "./audio";
 
 /* ------------------------------------------------------------------ *
  *  Phone Snatcher — 3D engine
@@ -179,6 +180,8 @@ interface Agent {
   beingSnatched: boolean;
   /** Deterministic looping route for online crowd (shared across clients). */
   path: CrowdPath | null;
+  /** Perceived gender of the look — drives which scream plays on snatch. */
+  gender: "male" | "female";
 }
 
 /** Visual registry entry: tracks a spawned person's animated Meshy model. */
@@ -435,6 +438,8 @@ export class GameEngine {
   private playerSnatchTarget: Agent | null = null; // civilian the local player is snatching
   private snatchAlerts: number[] = []; // bearings to active snatches (cop HUD)
   private snatchBeacons: THREE.Mesh[] = []; // reusable 3D markers above active snatches
+  private audio = new AudioManager(); // one-shot game SFX
+  private timeWarned = false; // "10 seconds left" alarm fired this round?
 
   /** Combined asset-load progress (0..1) across characters + props. */
   get assetProgress(): number {
@@ -1022,6 +1027,8 @@ export class GameEngine {
   /* --------------------------- agents --------------------------- */
 
   private makePerson(type: AgentType, opts?: { variant?: number; pos?: THREE.Vector3 }): Agent {
+    // Pin a concrete look index so the rendered model and its scream voice agree.
+    const variant = opts?.variant ?? Math.floor(Math.random() * 997);
     const g = new THREE.Group();
     const body = new THREE.Group();
     g.add(body);
@@ -1100,10 +1107,11 @@ export class GameEngine {
       snatchTarget: null,
       beingSnatched: false,
       path: null,
+      gender: this.charModels.genderForVariant(variant),
     };
     g.position.copy(opts?.pos ?? this.randomPoint());
     this.scene.add(g);
-    this.registerPerson(g, body, kindFor(type), opts?.variant);
+    this.registerPerson(g, body, kindFor(type), variant);
     return a;
   }
 
@@ -1329,8 +1337,16 @@ export class GameEngine {
   beginRound(): void {
     this.status = "playing";
     this.paused = false;
+    this.timeWarned = false;
+    this.audio.prime();
+    this.audio.play("game_start");
     this.canvas?.requestPointerLock();
     this.pushHud();
+  }
+
+  /** Play the panic scream that matches a civilian victim's gender. */
+  private playScream(gender: "male" | "female"): void {
+    this.audio.play(gender === "female" ? "scream_female" : "scream_male");
   }
 
   toLobby(): void {
@@ -1390,6 +1406,7 @@ export class GameEngine {
 
   private update(dt: number): void {
     this.timeLeft -= dt;
+    this.checkTimeWarning(this.timeLeft);
     if (this.timeLeft <= 0) {
       this.timeLeft = 0;
       // time out: snatchers win if any remain
@@ -1605,6 +1622,7 @@ export class GameEngine {
         a.snatchTarget = null;
         a.stealCd = rand(9, 16);
         this.setSnatchAnim(a.group, false);
+        this.playScream(tgt.gender);
       }
       return true;
     }
@@ -1660,6 +1678,7 @@ export class GameEngine {
         this.fire(`Phone snatched! ${this.phonesStolen}/${PHONE_TARGET}`);
         this.snatchCharge = 0;
         this.setResistAnim(target.group, false);
+        this.playScream(target.gender);
         this.playerSnatchTarget = null;
       }
     } else {
@@ -1700,6 +1719,7 @@ export class GameEngine {
     if (!invisible && dist < COP_CATCH_RANGE && this.copSuspicion > 0.3) {
       this.caught = true;
       this.fire("The cop caught you!");
+      this.audio.play("apprehend");
     }
 
     // suspicion decay
@@ -1774,6 +1794,7 @@ export class GameEngine {
         this.scene.remove(p.group);
         this.powerups = this.powerups.filter((x) => x !== p);
         this.fire(`Picked up ${POWER_META[p.kind].label}`);
+        this.audio.play("powerup_pickup");
       }
     }
     if (this.decoyTime > 0) {
@@ -1925,6 +1946,7 @@ export class GameEngine {
       target.alive = false;
       target.group.visible = false;
       this.fire("Snatcher apprehended!");
+      this.audio.play("apprehend");
     } else {
       this.strikes++;
       this.copSuspicion = 0;
@@ -1959,6 +1981,7 @@ export class GameEngine {
     if (this.inventory === null) return;
     const kind = this.inventory;
     this.inventory = null;
+    this.audio.play("powerup_use");
 
     switch (kind) {
       case "speed":
@@ -2128,6 +2151,9 @@ export class GameEngine {
   beginOnlineRound(): void {
     this.status = "playing";
     this.paused = false;
+    this.timeWarned = false;
+    this.audio.prime();
+    this.audio.play("game_start");
     this.playerPos.set(0, EYE, 30);
     this.playerVel.set(0, 0, 0);
     this.yaw = Math.PI;
@@ -2205,6 +2231,7 @@ export class GameEngine {
 
   onServerState(s: NetState): void {
     this.srvTimeLeft = s.timeLeft;
+    if (this.status === "playing") this.checkTimeWarning(s.timeLeft);
     this.srvStrikes = s.strikes;
     this.srvPhones = s.teamPhones;
     this.srvPhoneTarget = s.phoneTarget;
@@ -2232,6 +2259,7 @@ export class GameEngine {
     if (this.inventory !== null) return;
     this.inventory = kind;
     this.fire(`Picked up ${POWER_META[kind].label}`);
+    this.audio.play("powerup_pickup");
     this.pushHud();
   }
 
@@ -2246,12 +2274,22 @@ export class GameEngine {
   onCaught(): void {
     this.caught = true;
     this.fire("You were apprehended!");
+    this.audio.play("apprehend");
     this.pushHud();
   }
 
   onEvent(message: string): void {
     this.fire(message);
+    if (message.toLowerCase().includes("apprehended")) this.audio.play("apprehend");
     this.pushHud();
+  }
+
+  /** Fire the urgent countdown alarm once, when ~10s remain in the round. */
+  private checkTimeWarning(timeLeft: number): void {
+    if (!this.timeWarned && timeLeft > 0 && timeLeft <= 10) {
+      this.timeWarned = true;
+      this.audio.play("time_warning");
+    }
   }
 
   /* --- entity sync --- */
@@ -2492,6 +2530,7 @@ export class GameEngine {
         victim.hasPhone = false;
         victim.phoneMesh.visible = false;
         this.setResistAnim(victim.group, false);
+        this.playScream(victim.gender);
         this.snatching = false;
         this.snatchCharge = 0;
         this.playerSnatchTarget = null;
@@ -2583,6 +2622,7 @@ export class GameEngine {
     if (this.inventory === null || !this.net) return;
     const kind = this.inventory;
     this.inventory = null;
+    this.audio.play("powerup_use");
     this.net.use(kind);
     switch (kind) {
       case "speed":

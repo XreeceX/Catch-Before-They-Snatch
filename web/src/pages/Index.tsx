@@ -1088,6 +1088,16 @@ const Results = ({
 }) => {
   const playerWon =
     (isCop && hud.winner === "cop") || (!isCop && hud.winner === "snatchers");
+
+  const headline = hud.winner === "cop" ? "Cop Wins" : "Snatchers Win";
+  const reason: string =
+    hud.winner === "snatchers"
+      ? hud.strikes >= hud.maxStrikes
+        ? "The cop made too many wrong arrests"
+        : "The crew snatched every phone in time"
+      : hud.snatchersTotal > 0 && hud.snatchersLeft === 0
+        ? "Every snatcher was caught"
+        : "Time ran out — the crew failed the heist";
   return (
     <div className="absolute inset-0 z-20 flex flex-col items-center justify-center px-6 text-center backdrop-blur-sm">
       <div className="animate-pop-in w-full max-w-sm rounded-3xl border border-white/10 bg-card/85 p-8 shadow-2xl">
@@ -1099,8 +1109,9 @@ const Results = ({
           {playerWon ? "Victory" : "Defeat"}
         </p>
         <h2 className="mt-4 font-display text-4xl font-extrabold uppercase leading-none tracking-tight text-foreground">
-          {hud.winner === "cop" ? "Cop Wins" : "Snatchers Win"}
+          {headline}
         </h2>
+        <p className="mt-3 text-sm text-muted-foreground">{reason}</p>
 
         <div className="mt-6 flex justify-center gap-6">
           {isCop ? (

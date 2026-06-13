@@ -448,7 +448,8 @@ export class GameRoom extends DurableObject<Env> {
   private evaluateWin(): void {
     if (this.timeLeft <= 0) {
       this.timeLeft = 0;
-      this.endGame(this.snatchersLeft() > 0 ? "snatchers" : "cop");
+      // Time ran out: the crew failed to snatch every phone, so the cop wins.
+      this.endGame("cop");
       return;
     }
     if (this.strikes >= MAX_STRIKES) return this.endGame("snatchers");

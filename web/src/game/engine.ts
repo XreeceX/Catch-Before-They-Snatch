@@ -1409,8 +1409,8 @@ export class GameEngine {
     this.checkTimeWarning(this.timeLeft);
     if (this.timeLeft <= 0) {
       this.timeLeft = 0;
-      // time out: snatchers win if any remain
-      this.endGame(this.snatchersLeftCount() > 0 ? "snatchers" : "cop");
+      // time out: the crew failed to snatch every phone in time, so the cop wins
+      this.endGame("cop");
       return;
     }
 

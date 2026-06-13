@@ -15,6 +15,7 @@ export type PropKind =
   | "lamp"
   | "crate"
   | "road"
+  | "pavement"
   | "bus"
   | "phonebox"
   | "londonEye"
@@ -45,6 +46,8 @@ const LAMP = `${R2}/7ed69813-75a1-484b-81eb-9242e1788e66`;
 const CRATE = `${R2}/ac60ef7f-de27-41af-9b1b-172c714e7d1b`;
 // Wet London street paving (replaces the older road slab for a better surface).
 const ROAD = `${R2}/7cc002de-97ec-44b4-8fd4-56934c4f348d`;
+// Clean light-grey tiling sidewalk paving slab.
+const PAVEMENT = `${R2}/6e2cd9bd-7f29-4d47-9eec-5861ea5bba1c`;
 // Westminster-style stone arch bridge across the Thames.
 const BRIDGE = `${R2}/1a9b8f21-40ec-4489-934d-b43b6bb328f7`;
 // Filled in after Meshy generation completes (see waitTask results). Until then
@@ -67,6 +70,8 @@ const PROPS: Record<PropKind, PropDef> = {
   lamp: { url: `${LAMP}.glb`, fit: "height", size: 6, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   crate: { url: `${CRATE}.glb`, fit: "longest", size: 1.3, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   road: { url: `${ROAD}.glb`, fit: "longest", size: 12, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
+  // Directionless tiling sidewalk slab; sized so its footprint tiles cleanly.
+  pavement: { url: `${PAVEMENT}.glb`, fit: "longest", size: 6, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   // Directionless; sized so its longest (deck) axis fills the river crossing.
   bridge: { url: `${BRIDGE}.glb`, fit: "longest", size: 62, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   // Bus front faces -X; buses travel toward +Z, so the correction maps -X → +Z.

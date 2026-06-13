@@ -785,14 +785,36 @@ export class GameEngine {
     road.receiveShadow = true;
     this.streetGroup.add(road);
 
-    // pavements
+    // pavements — base slab kerb (always present), topped with generated
+    // paving tiles when the Meshy slab is loaded.
     const pavMat = new THREE.MeshStandardMaterial({ map: pavementTexture(), roughness: 1 });
     pavMat.map!.repeat.set(2, 22);
+    const hasPavTile = this.propModels.ready && this.propModels.has("pavement");
     for (const side of [-1, 1]) {
       const pav = new THREE.Mesh(new THREE.BoxGeometry(8, 0.3, HALF_Z * 2), pavMat);
       pav.position.set(side * (HALF_X - 4), 0.15, 0);
       pav.receiveShadow = true;
       this.streetGroup.add(pav);
+    }
+
+    // Tile the generated paving slab across the top of each pavement strip so
+    // the walkway reads as clean light-grey London flagstones.
+    if (hasPavTile) {
+      const pdims = this.propModels.dims("pavement");
+      const step = Math.max(pdims.x, pdims.z, 2) - 0.02;
+      const top = 0.3; // pavement kerb top surface
+      for (const side of [-1, 1]) {
+        const cx = side * (HALF_X - 4);
+        for (let x = cx - 4 + step / 2; x < cx + 4; x += step) {
+          for (let z = -HALF_Z + step / 2; z < HALF_Z; z += step) {
+            const tile = this.propModels.create("pavement");
+            if (!tile) break;
+            tile.position.set(x, top, z);
+            tile.rotation.y = Math.floor(Math.random() * 4) * (Math.PI / 2);
+            this.streetGroup.add(tile);
+          }
+        }
+      }
     }
 
     // generated asphalt slabs tiled across the road surface. The slabs are

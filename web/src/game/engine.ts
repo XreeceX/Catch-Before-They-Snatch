@@ -1431,6 +1431,10 @@ export class GameEngine {
         this.endGame("snatchers");
         return;
       }
+      if (this.phonesStolen >= PHONE_TARGET) {
+        this.endGame("snatchers");
+        return;
+      }
       if (this.aliveSnatchers().length === 0) {
         this.endGame("cop");
         return;
@@ -1623,6 +1627,10 @@ export class GameEngine {
         a.stealCd = rand(9, 16);
         this.setSnatchAnim(a.group, false);
         this.playScream(tgt.gender);
+        // AI snatchers are on the snatcher team — their steals count toward the
+        // shared team total (matching online), so the HUD/result reflect every
+        // phone the crew grabbed, not just the local player's.
+        this.phonesStolen++;
       }
       return true;
     }

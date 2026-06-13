@@ -80,6 +80,31 @@ function pending(url: string): boolean {
   return url.includes("/PENDING") || url.startsWith("__");
 }
 
+/**
+ * Meshy "in-place" locomotion clips still bake horizontal root translation into
+ * the hip/root bone. Because the engine moves the whole group itself, that baked
+ * drift makes the mesh slide away from (and snap back to) its group every loop —
+ * the character appears to glide / moonwalk instead of stepping in place.
+ *
+ * This flattens the horizontal (X/Z) channel of every `.position` track to its
+ * first keyframe, leaving only vertical bob and the rotation tracks that drive
+ * the actual leg/arm cycle. The result is a clean, planted walk in place.
+ */
+function stripRootMotion(clip: THREE.AnimationClip): THREE.AnimationClip {
+  for (const track of clip.tracks) {
+    if (!track.name.endsWith(".position")) continue;
+    const values = track.values;
+    if (values.length < 3) continue;
+    const baseX = values[0];
+    const baseZ = values[2];
+    for (let i = 0; i < values.length; i += 3) {
+      values[i] = baseX; // X
+      values[i + 2] = baseZ; // Z (keep Y for natural vertical bob)
+    }
+  }
+  return clip;
+}
+
 const AXIS: Record<AxisKey, THREE.Vector3> = {
   positiveX: new THREE.Vector3(1, 0, 0),
   negativeX: new THREE.Vector3(-1, 0, 0),
@@ -292,9 +317,9 @@ export class CharacterModels {
       ]);
       const idleClip = idle.animations[0].clone();
       idleClip.name = "idle";
-      const walkClip = walk.animations[0].clone();
+      const walkClip = stripRootMotion(walk.animations[0].clone());
       walkClip.name = "walk";
-      const runClip = run.animations[0].clone();
+      const runClip = stripRootMotion(run.animations[0].clone());
       runClip.name = "run";
       let snatchClip: THREE.AnimationClip | null = null;
       if (def.snatch) {

@@ -239,6 +239,18 @@ function pavementTexture(): THREE.Texture {
   return tex;
 }
 
+/** Soft radial halo used for the additive glow around lamp bulbs. */
+function glowTexture(): THREE.Texture {
+  const { c, ctx } = makeCanvas(128);
+  const grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, "rgba(255,233,176,1)");
+  grad.addColorStop(0.35, "rgba(255,206,120,0.55)");
+  grad.addColorStop(1, "rgba(255,196,110,0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+}
+
 function waterTexture(): THREE.Texture {
   const { c, ctx } = makeCanvas(256);
   ctx.fillStyle = "#1f4f6b";
@@ -325,6 +337,7 @@ export class GameEngine {
   // generated static props (buildings, lamp, crate, road)
   private propModels = new PropModels();
   private streetGroup = new THREE.Group();
+  private lampHalo = glowTexture();
 
   // markers
   private copMarker: THREE.Mesh | null = null;
@@ -621,15 +634,19 @@ export class GameEngine {
       this.streetGroup.add(pav);
     }
 
-    // generated asphalt slabs tiled across the road surface
+    // generated asphalt slabs tiled across the road surface. The slabs are
+    // grounded at y=0 in props.ts, so we SINK them by their own thickness and
+    // leave only a thin top layer flush with the ground — otherwise their full
+    // height sticks up and clips the characters walking at y=0.
     if (this.propModels.ready) {
       const dims = this.propModels.dims("road");
       const step = Math.max(dims.x, dims.z, 4) - 0.02;
+      const sink = Math.max(dims.y - 0.04, 0); // top sits ~0.04 above base plane
       for (let x = -HALF_X + step / 2; x < HALF_X - 8; x += step) {
         for (let z = -HALF_Z + step / 2; z < HALF_Z; z += step) {
           const tile = this.propModels.create("road");
           if (!tile) break;
-          tile.position.set(x, 0.02, z);
+          tile.position.set(x, -sink, z);
           tile.rotation.y = Math.floor(Math.random() * 4) * (Math.PI / 2);
           this.streetGroup.add(tile);
         }
@@ -741,6 +758,9 @@ export class GameEngine {
     if (gen) {
       gen.position.set(x, 0, z);
       gen.rotation.y = Math.random() * Math.PI * 2;
+      // light the head at ~95% of the lamp height.
+      const headY = (this.propModels.dims("lamp").y || 6) * 0.95;
+      gen.add(this.makeLampGlow(headY));
       return gen;
     }
     const g = new THREE.Group();
@@ -749,14 +769,45 @@ export class GameEngine {
     post.position.y = 3;
     post.castShadow = true;
     g.add(post);
-    const head = new THREE.Mesh(
-      new THREE.SphereGeometry(0.35, 10, 10),
-      new THREE.MeshStandardMaterial({ color: 0xfff1c0, emissive: 0xffcf6e, emissiveIntensity: 1.4 })
-    );
-    head.position.y = 6;
-    g.add(head);
+    g.add(this.makeLampGlow(6));
     g.position.set(x, 0, z);
     return g;
+  }
+
+  /** Warm bulb + additive halo sprite + a cheap (shadowless) point light. */
+  private makeLampGlow(y: number): THREE.Group {
+    const glow = new THREE.Group();
+
+    const bulb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.32, 12, 12),
+      new THREE.MeshStandardMaterial({
+        color: 0xfff1c0,
+        emissive: 0xffcf6e,
+        emissiveIntensity: 2.4,
+      })
+    );
+    bulb.position.y = y;
+    glow.add(bulb);
+
+    const halo = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: this.lampHalo,
+        color: 0xffd98a,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    halo.scale.setScalar(3.2);
+    halo.position.y = y;
+    glow.add(halo);
+
+    const light = new THREE.PointLight(0xffd28a, 14, 22, 2);
+    light.position.y = y - 0.1;
+    light.castShadow = false;
+    glow.add(light);
+
+    return glow;
   }
 
   private makeBus(): THREE.Group {

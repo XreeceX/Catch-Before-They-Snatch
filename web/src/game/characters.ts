@@ -35,30 +35,48 @@ interface ModelDef {
 const R2 = "https://r2-pub.rork.com/generated-3d-models/yfgqeifpmt8941tk7v8l3";
 const PED = `${R2}/b54fd027-6256-4c43-8745-8a276f4cd05f`;
 const COP = `${R2}/26944834-1b4f-428c-9055-b28d59b91a45`;
+// Two extra civilian variants. Snatchers always share the civilian pool, so
+// adding looks keeps them indistinguishable while making the crowd varied.
+const PED2 = `${R2}/5ffe3f1a-dded-4781-9ab6-77be7e49d7dc`;
+const PED3 = `${R2}/0b944e2d-d282-4d75-b779-bf6b18a39184`;
 
-const MODELS: Record<CharKind, ModelDef> = {
-  pedestrian: {
-    rigged: `${PED}-rigged.glb`,
-    idle: `${PED}-anim-idle.glb`,
-    walk: `${PED}-anim-casual-walk-inplace.glb`,
+function pedDef(base: string, height: number): ModelDef {
+  return {
+    rigged: `${base}-rigged.glb`,
+    idle: `${base}-anim-idle.glb`,
+    walk: `${base}-anim-casual-walk-inplace.glb`,
     // no dedicated run clip was generated — reuse the walk cycle.
-    run: `${PED}-anim-casual-walk-inplace.glb`,
+    run: `${base}-anim-casual-walk-inplace.glb`,
     // Collect_Object clip, used as the phone-snatch animation.
-    snatch: `${PED}-anim-collect-object.glb`,
+    snatch: `${base}-anim-collect-object.glb`,
     localFrontAxis: "positiveZ",
     localUpAxis: "positiveY",
-    height: 1.8,
-  },
-  police: {
-    rigged: `${COP}-rigged.glb`,
-    idle: `${COP}-anim-idle.glb`,
-    walk: `${COP}-anim-casual-walk-inplace.glb`,
-    run: `${COP}-anim-casual-walk-inplace.glb`,
-    localFrontAxis: "positiveZ",
-    localUpAxis: "positiveY",
-    height: 1.85,
-  },
+    height,
+  };
+}
+
+/** Every interchangeable civilian look. The engine picks one at random per
+ *  person, so snatchers and civilians are visually indistinguishable. */
+const PEDESTRIAN_VARIANTS: ModelDef[] = [
+  pedDef(PED, 1.8),
+  pedDef(PED2, 1.72),
+  pedDef(PED3, 1.82),
+];
+
+const POLICE: ModelDef = {
+  rigged: `${COP}-rigged.glb`,
+  idle: `${COP}-anim-idle.glb`,
+  walk: `${COP}-anim-casual-walk-inplace.glb`,
+  run: `${COP}-anim-casual-walk-inplace.glb`,
+  localFrontAxis: "positiveZ",
+  localUpAxis: "positiveY",
+  height: 1.85,
 };
+
+/** A URL still pointing at a placeholder that has no generated GLB yet. */
+function pending(url: string): boolean {
+  return url.includes("/PENDING") || url.startsWith("__");
+}
 
 const AXIS: Record<AxisKey, THREE.Vector3> = {
   positiveX: new THREE.Vector3(1, 0, 0),
@@ -211,60 +229,83 @@ export class CharacterInstance {
   }
 }
 
-/** Loads + caches the two character templates, then mints instances. */
+interface LoadedModel {
+  tpl: Template;
+  def: ModelDef;
+}
+
+/** Loads + caches the character templates (police + a pool of civilian
+ *  variants), then mints individually animated instances. */
 export class CharacterModels {
   private loader = new GLTFLoader();
-  private templates = new Map<CharKind, Template>();
+  private police: LoadedModel | null = null;
+  private pedestrians: LoadedModel[] = [];
   private loaded = false;
 
   get ready(): boolean {
     return this.loaded;
   }
 
-  /** True only when real generated URLs have been wired in. */
+  /** True only when at least one real generated character URL is wired in. */
   get enabled(): boolean {
-    return !MODELS.pedestrian.rigged.startsWith("__");
+    return !pending(POLICE.rigged) || PEDESTRIAN_VARIANTS.some((d) => !pending(d.rigged));
+  }
+
+  private async loadModel(def: ModelDef): Promise<LoadedModel | null> {
+    try {
+      const [rig, idle, walk, run] = await Promise.all([
+        this.loader.loadAsync(def.rigged),
+        this.loader.loadAsync(def.idle),
+        this.loader.loadAsync(def.walk),
+        this.loader.loadAsync(def.run),
+      ]);
+      const idleClip = idle.animations[0].clone();
+      idleClip.name = "idle";
+      const walkClip = walk.animations[0].clone();
+      walkClip.name = "walk";
+      const runClip = run.animations[0].clone();
+      runClip.name = "run";
+      let snatchClip: THREE.AnimationClip | null = null;
+      if (def.snatch) {
+        try {
+          const snatch = await this.loader.loadAsync(def.snatch);
+          snatchClip = snatch.animations[0].clone();
+          snatchClip.name = "snatch";
+        } catch (err) {
+          console.warn("snatch clip failed", err);
+        }
+      }
+      return {
+        def,
+        tpl: {
+          scene: rig.scene,
+          clips: { idle: idleClip, walk: walkClip, run: runClip, snatch: snatchClip },
+        },
+      };
+    } catch (err) {
+      console.warn("character model failed to load", def.rigged, err);
+      return null;
+    }
   }
 
   async load(): Promise<void> {
     if (!this.enabled || this.loaded) return;
-    await Promise.all(
-      (Object.keys(MODELS) as CharKind[]).map(async (kind) => {
-        const def = MODELS[kind];
-        const [rig, idle, walk, run] = await Promise.all([
-          this.loader.loadAsync(def.rigged),
-          this.loader.loadAsync(def.idle),
-          this.loader.loadAsync(def.walk),
-          this.loader.loadAsync(def.run),
-        ]);
-        const idleClip = idle.animations[0].clone();
-        idleClip.name = "idle";
-        const walkClip = walk.animations[0].clone();
-        walkClip.name = "walk";
-        const runClip = run.animations[0].clone();
-        runClip.name = "run";
-        let snatchClip: THREE.AnimationClip | null = null;
-        if (def.snatch) {
-          try {
-            const snatch = await this.loader.loadAsync(def.snatch);
-            snatchClip = snatch.animations[0].clone();
-            snatchClip.name = "snatch";
-          } catch (err) {
-            console.warn(`snatch clip failed for ${kind}`, err);
-          }
-        }
-        this.templates.set(kind, {
-          scene: rig.scene,
-          clips: { idle: idleClip, walk: walkClip, run: runClip, snatch: snatchClip },
-        });
-      }),
-    );
+    const pedDefs = PEDESTRIAN_VARIANTS.filter((d) => !pending(d.rigged));
+    const [police, ...peds] = await Promise.all([
+      pending(POLICE.rigged) ? Promise.resolve(null) : this.loadModel(POLICE),
+      ...pedDefs.map((d) => this.loadModel(d)),
+    ]);
+    this.police = police;
+    this.pedestrians = peds.filter((p): p is LoadedModel => p !== null);
     this.loaded = true;
   }
 
   create(kind: CharKind): CharacterInstance | null {
-    const tpl = this.templates.get(kind);
-    if (!tpl) return null;
-    return new CharacterInstance(tpl, MODELS[kind]);
+    if (kind === "police") {
+      return this.police ? new CharacterInstance(this.police.tpl, this.police.def) : null;
+    }
+    if (this.pedestrians.length === 0) return null;
+    const m = this.pedestrians[Math.floor(Math.random() * this.pedestrians.length)];
+    return new CharacterInstance(m.tpl, m.def);
   }
 }

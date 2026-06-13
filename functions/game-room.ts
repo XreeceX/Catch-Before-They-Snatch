@@ -19,7 +19,7 @@ type Winner = "cop" | "snatchers" | null;
 type PowerKind = "track_cop" | "speed" | "invisible" | "decoy" | "reveal" | "trap";
 
 const ROUND_TIME = 240;
-const PHONE_TARGET = 12;
+const PHONE_TARGET = 5;
 const MAX_STRIKES = 3;
 const HALF_X = 44;
 const HALF_Z = 80;
@@ -297,6 +297,7 @@ export class GameRoom extends DurableObject<Env> {
       if (target && target.role === "snatcher" && target.alive && dist) {
         target.alive = false;
         this.event(`${cop.name} apprehended ${target.name}!`);
+        this.broadcastSfx("apprehend");
         this.sendTo(targetId, { t: "caught" });
         return;
       }
@@ -318,6 +319,8 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private handleUse(ws: WebSocket, me: Player, kind: PowerKind): void {
+    // Synced power-up sound so every player hears it, not just the user.
+    this.broadcastSfx("powerup_use");
     switch (kind) {
       case "invisible":
         me.invisibleUntil = Date.now() + 5000;
@@ -410,6 +413,8 @@ export class GameRoom extends DurableObject<Env> {
           this.teamPhones += 1;
           p.snatching = false;
           this.event(`${p.name} snatched a phone`);
+          // Synced scream so every client (cop included) hears the victim.
+          this.broadcastSfx(Math.random() < 0.5 ? "scream_male" : "scream_female");
         }
       }
 
@@ -521,6 +526,19 @@ export class GameRoom extends DurableObject<Env> {
       }
     }
     this.reportToDirectory();
+  }
+
+  /** Broadcast a one-shot sound effect to every client so events are heard
+   *  identically by the cop and all snatchers. */
+  private broadcastSfx(name: string): void {
+    const msg = JSON.stringify({ t: "sfx", name });
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.send(msg);
+      } catch {
+        // ignore
+      }
+    }
   }
 
   private event(message: string): void {

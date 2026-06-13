@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { CharacterModels, CharacterInstance, CharKind } from "./characters";
 import { PropModels } from "./props";
-import { AudioManager } from "./audio";
+import { AudioManager, type SfxName } from "./audio";
 
 /* ------------------------------------------------------------------ *
  *  Phone Snatcher — 3D engine
@@ -104,7 +104,7 @@ export interface NetState {
 }
 
 const ROUND_TIME = 240; // 4 minutes
-const PHONE_TARGET = 8;
+const PHONE_TARGET = 5;
 const MAX_STRIKES = 3;
 const HALF_X = 44;
 const HALF_Z = 80;
@@ -2274,14 +2274,17 @@ export class GameEngine {
   onCaught(): void {
     this.caught = true;
     this.fire("You were apprehended!");
-    this.audio.play("apprehend");
     this.pushHud();
   }
 
   onEvent(message: string): void {
     this.fire(message);
-    if (message.toLowerCase().includes("apprehended")) this.audio.play("apprehend");
     this.pushHud();
+  }
+
+  /** Server-synced one-shot sound so every client hears the same event. */
+  onSfx(name: SfxName): void {
+    this.audio.play(name);
   }
 
   /** Fire the urgent countdown alarm once, when ~10s remain in the round. */
@@ -2622,7 +2625,6 @@ export class GameEngine {
     if (this.inventory === null || !this.net) return;
     const kind = this.inventory;
     this.inventory = null;
-    this.audio.play("powerup_use");
     this.net.use(kind);
     switch (kind) {
       case "speed":

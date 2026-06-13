@@ -338,6 +338,9 @@ const Online = ({
         case "event":
           engine.onEvent(msg.message);
           break;
+        case "sfx":
+          engine.onSfx(msg.name);
+          break;
       }
     },
     [engineRef, setScreenSafe],

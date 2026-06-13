@@ -7,6 +7,7 @@
  */
 
 import type { PowerKind, Role, Winner } from "@/game/engine";
+import type { SfxName } from "@/game/audio";
 
 const BASE = (import.meta.env.EXPO_PUBLIC_RORK_FUNCTIONS_URL as string | undefined) ?? "";
 
@@ -57,6 +58,7 @@ export type ServerMessage =
   | { t: "intel"; kind: "reveal"; ids: string[]; until: number }
   | { t: "intel"; kind: "track"; id: string; until: number }
   | { t: "event"; message: string }
+  | { t: "sfx"; name: SfxName }
   | { t: "grant"; kind: PowerKind }
   | { t: "frozen"; until: number }
   | { t: "caught" };

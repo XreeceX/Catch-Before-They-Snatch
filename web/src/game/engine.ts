@@ -2201,6 +2201,7 @@ export class GameEngine {
       g.position.y = 1 + Math.sin(performance.now() * 0.003 + g.id) * 0.15;
     }
 
+    this.updateBuses(dt);
     this.resolveOnlinePickup();
     this.resolveOnlineInteract();
     this.updateOnlineSnatch(dt);

@@ -49,7 +49,9 @@ function pedDef(base: string, height: number): ModelDef {
     run: `${base}-anim-casual-walk-inplace.glb`,
     // Collect_Object clip, used as the phone-snatch animation.
     snatch: `${base}-anim-collect-object.glb`,
-    localFrontAxis: "positiveZ",
+    // Meshy rigs face -Z; correcting to this makes them walk facing forward
+    // (rather than moonwalking backwards) and face victims while snatching.
+    localFrontAxis: "negativeZ",
     localUpAxis: "positiveY",
     height,
   };
@@ -68,7 +70,7 @@ const POLICE: ModelDef = {
   idle: `${COP}-anim-idle.glb`,
   walk: `${COP}-anim-casual-walk-inplace.glb`,
   run: `${COP}-anim-casual-walk-inplace.glb`,
-  localFrontAxis: "positiveZ",
+  localFrontAxis: "negativeZ",
   localUpAxis: "positiveY",
   height: 1.85,
 };
@@ -234,6 +236,12 @@ export class CharacterInstance {
         if (from) from.crossFadeTo(to, 0.18, false);
       }
       this.state = next;
+    }
+    // Couple the locomotion clip's playback to ground speed so feet track the
+    // ground instead of sliding (the "moonwalk" footskate effect).
+    if (next === "walk" || next === "run") {
+      const active = this.actions[next];
+      if (active) active.timeScale = Math.max(0.65, Math.min(2.2, locomotion / 1.6));
     }
     this.mixer.update(dt);
   }

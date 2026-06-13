@@ -19,6 +19,7 @@ export type PropKind =
   | "phonebox"
   | "londonEye"
   | "bigBen"
+  | "bridge"
   | "smartphone";
 
 type AxisKey =
@@ -42,7 +43,10 @@ const BUILDING_A = `${R2}/d76fd982-7ff6-4ba0-a8ae-66528e342aa7`;
 const BUILDING_B = `${R2}/1a48df9f-9858-4fb6-a449-4e0d1c733cb8`;
 const LAMP = `${R2}/7ed69813-75a1-484b-81eb-9242e1788e66`;
 const CRATE = `${R2}/ac60ef7f-de27-41af-9b1b-172c714e7d1b`;
-const ROAD = `${R2}/32aba5c0-5798-4a0e-9e7f-8c28c54872b1`;
+// Wet London street paving (replaces the older road slab for a better surface).
+const ROAD = `${R2}/7cc002de-97ec-44b4-8fd4-56934c4f348d`;
+// Westminster-style stone arch bridge across the Thames.
+const BRIDGE = `${R2}/1a9b8f21-40ec-4489-934d-b43b6bb328f7`;
 // Filled in after Meshy generation completes (see waitTask results). Until then
 // these stay PENDING and the loader skips them, so the engine uses procedural
 // fallbacks for the bus, phone box, landmarks and smartphone.
@@ -63,6 +67,8 @@ const PROPS: Record<PropKind, PropDef> = {
   lamp: { url: `${LAMP}.glb`, fit: "height", size: 6, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   crate: { url: `${CRATE}.glb`, fit: "longest", size: 1.3, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   road: { url: `${ROAD}.glb`, fit: "longest", size: 12, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
+  // Directionless; sized so its longest (deck) axis fills the river crossing.
+  bridge: { url: `${BRIDGE}.glb`, fit: "longest", size: 62, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   // Bus front faces -X; buses travel toward +Z, so the correction maps -X → +Z.
   bus: { url: `${BUS}.glb`, fit: "longest", size: 12, localFrontAxis: "negativeX", localUpAxis: "positiveY" },
   phonebox: { url: `${PHONEBOX}.glb`, fit: "height", size: 2.6, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },

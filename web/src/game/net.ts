@@ -32,6 +32,7 @@ export interface NetPlayer {
   alive: boolean;
   isCop: boolean;
   snatching: boolean;
+  invisible: boolean;
 }
 
 export type ServerMessage =

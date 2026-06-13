@@ -94,7 +94,7 @@ export interface NetState {
   snatchersTotal: number;
   snatchersLeft: number;
   winner: Winner;
-  players: { id: string; x: number; z: number; yaw: number; alive: boolean; isCop: boolean; snatching: boolean }[];
+  players: { id: string; x: number; z: number; yaw: number; alive: boolean; isCop: boolean; snatching: boolean; invisible: boolean }[];
   crates: NetEntity[];
   traps: NetEntity[];
   decoys: NetEntity[];
@@ -105,6 +105,13 @@ const PHONE_TARGET = 8;
 const MAX_STRIKES = 3;
 const HALF_X = 44;
 const HALF_Z = 80;
+// River + bridge + far-bank plaza geometry. The street runs to +HALF_Z, then a
+// bridge corridor crosses the Thames to a far-bank plaza where Big Ben and the
+// London Eye stand — all walkable.
+const RIVER_NEAR = HALF_Z; // street ends / river begins
+const RIVER_FAR = HALF_Z + 56; // far-bank shoreline
+const FAR_BANK_MAX_Z = RIVER_FAR + 80; // back edge of the walkable plaza
+const DEFAULT_BRIDGE_HALF = 9; // x half-width of the walkable bridge corridor
 const EYE = 1.7;
 const INTERACT_RANGE = 3.2;
 const COP_CATCH_RANGE = 2.4;
@@ -178,6 +185,7 @@ interface RemoteAvatar {
   alive: boolean;
   isCop: boolean;
   snatching: boolean;
+  invisible: boolean;
 }
 
 function kindFor(type: AgentType): CharKind {
@@ -332,6 +340,12 @@ export class GameEngine {
   private buses: THREE.Group[] = [];
   private thamesWater: THREE.Mesh | null = null;
 
+  // collision: cylindrical colliders for solid static props (phone boxes,
+  // lamps, landmarks). Rebuilt with the street.
+  private colliders: { x: number; z: number; r: number }[] = [];
+  // walkable bridge corridor half-width (updated from the generated bridge).
+  private bridgeHalf = DEFAULT_BRIDGE_HALF;
+
   // generated character models
   private charModels = new CharacterModels();
   private people: Person[] = [];
@@ -483,6 +497,7 @@ export class GameEngine {
         }
       });
     }
+    this.colliders = [];
     this.buildRoad();
     this.buildBuildings();
     this.buildLamps();
@@ -502,6 +517,7 @@ export class GameEngine {
         box.position.set(x, 0, z);
         box.rotation.y = side === -1 ? Math.PI / 2 : -Math.PI / 2;
         this.streetGroup.add(box);
+        this.colliders.push({ x, z, r: 0.95 });
       }
     }
   }
@@ -531,10 +547,16 @@ export class GameEngine {
    *  the street, with a bridge spanning it from the play area to the far bank
    *  where the London Eye and Big Ben rise as a skyline. */
   private buildThames(): void {
-    const nearZ = HALF_Z + 2;   // river begins just past the play area edge
-    const farZ = HALF_Z + 60;   // far bank shore
+    const nearZ = RIVER_NEAR;
+    const farZ = RIVER_FAR;
     const riverWidth = HALF_X * 6;
-    const bridgeHalf = 8;
+
+    // bridge corridor width follows the generated bridge model when available.
+    // The model is directionless, so the WIDTH is its shorter horizontal axis.
+    const bridgeDims = this.propModels.dims("bridge");
+    const modelWidth = Math.min(bridgeDims.x, bridgeDims.z);
+    this.bridgeHalf = modelWidth > 1 ? clamp(modelWidth / 2, 6, 14) : DEFAULT_BRIDGE_HALF;
+    const bridgeHalf = this.bridgeHalf;
 
     // water surface (flat, running left-right across the view)
     const water = new THREE.Mesh(
@@ -564,52 +586,77 @@ export class GameEngine {
       this.streetGroup.add(wall);
     }
 
-    // far bank ground so the landmarks have something to stand on
+    // far bank plaza so the landmarks have a walkable surface to stand on
     const bank = new THREE.Mesh(
-      new THREE.PlaneGeometry(riverWidth, 100),
-      new THREE.MeshStandardMaterial({ color: 0x6f7a63, roughness: 1 }),
+      new THREE.PlaneGeometry(riverWidth, (FAR_BANK_MAX_Z - farZ) + 40),
+      new THREE.MeshStandardMaterial({ map: pavementTexture(), color: 0xb9bcc0, roughness: 1 }),
     );
+    (bank.material as THREE.MeshStandardMaterial).map!.repeat.set(20, 14);
     bank.rotation.x = -Math.PI / 2;
-    bank.position.set(0, 0.02, farZ + 50);
+    bank.position.set(0, 0.02, (farZ + FAR_BANK_MAX_Z) / 2 + 5);
     bank.receiveShadow = true;
     this.streetGroup.add(bank);
 
     this.buildBridge(nearZ, farZ, bridgeHalf);
 
-    // landmarks on the far bank, flanking the bridge
+    // landmarks on the far-bank plaza, flanking the bridge exit
     const eye = this.propModels.has("londonEye")
       ? this.propModels.create("londonEye")
       : this.makeEyeFallback();
     if (eye) {
-      eye.position.set(-HALF_X * 0.7, 0, farZ + 28);
+      const ex = -HALF_X * 0.62;
+      const ez = farZ + 30;
+      eye.position.set(ex, 0, ez);
       eye.rotation.y = Math.PI;
       this.streetGroup.add(eye);
+      this.colliders.push({ x: ex, z: ez, r: 10 });
     }
     const ben = this.propModels.has("bigBen")
       ? this.propModels.create("bigBen")
       : this.makeBenFallback();
     if (ben) {
-      ben.position.set(HALF_X * 0.7, 0, farZ + 30);
+      const bx = HALF_X * 0.62;
+      const bz = farZ + 34;
+      ben.position.set(bx, 0, bz);
       ben.rotation.y = Math.PI;
       this.streetGroup.add(ben);
+      this.colliders.push({ x: bx, z: bz, r: 5 });
     }
   }
 
   /** A flat bridge deck across the river, connecting the play area to the far
    *  bank, with railings, balusters and support piers in the water. */
   private buildBridge(nearZ: number, farZ: number, half: number): void {
-    const span = farZ - nearZ + 8;
+    const span = farZ - nearZ + 6;
     const centerZ = (nearZ + farZ) / 2;
 
+    // Flat walkable deck slab at ground level so the fixed-height player always
+    // has a clear surface to cross on, regardless of the decorative model.
     const deck = new THREE.Mesh(
-      new THREE.BoxGeometry(half * 2, 0.5, span),
+      new THREE.BoxGeometry(half * 2, 0.4, span),
       new THREE.MeshStandardMaterial({ color: 0x9a9389, roughness: 0.9 }),
     );
-    deck.position.set(0, 0.5, centerZ);
-    deck.castShadow = true;
+    deck.position.set(0, 0.12, centerZ);
     deck.receiveShadow = true;
     this.streetGroup.add(deck);
 
+    // Generated stone bridge (decorative structure: arches under, railings on
+    // the sides). Sunk so its deck roughly aligns with the flat walking slab.
+    if (this.propModels.has("bridge")) {
+      const model = this.propModels.create("bridge");
+      if (model) {
+        const dims = this.propModels.dims("bridge");
+        // Rotate so the longest (deck) axis runs along z (the crossing).
+        if (dims.z < dims.x) model.rotation.y = Math.PI / 2;
+        // Sink so the deck roughly meets the flat walking slab; arches dip into
+        // the water, railings rise above.
+        model.position.set(0, -dims.y * 0.5, centerZ);
+        this.streetGroup.add(model);
+        return;
+      }
+    }
+
+    // Procedural fallback railings + piers.
     const railMat = new THREE.MeshStandardMaterial({ color: 0x2f3640, metalness: 0.6, roughness: 0.5 });
     const balusters = 12;
     for (const sx of [-1, 1]) {
@@ -807,7 +854,9 @@ export class GameEngine {
   private buildLamps(): void {
     for (let z = -HALF_Z + 6; z < HALF_Z; z += 14) {
       for (const side of [-1, 1]) {
-        this.streetGroup.add(this.makeLamp(side * (HALF_X - 6.5), z));
+        const x = side * (HALF_X - 6.5);
+        this.streetGroup.add(this.makeLamp(x, z));
+        this.colliders.push({ x, z, r: 0.4 });
       }
     }
   }
@@ -1326,8 +1375,58 @@ export class GameEngine {
     const frozen = this.effects.some((e) => e.kind === "trap" && this.role === "snatcher");
     if (frozen) move.set(0, 0, 0);
 
-    this.playerPos.x = clamp(this.playerPos.x + move.x * dt, -HALF_X + 1, HALF_X - 1);
-    this.playerPos.z = clamp(this.playerPos.z + move.z * dt, -HALF_Z + 2, HALF_Z - 2);
+    this.stepPlayer(move.x * dt, move.z * dt);
+  }
+
+  /** True if a point lies on a walkable surface (street, bridge corridor, or
+   *  far-bank plaza) — used to keep players off the river and out of the void. */
+  private isWalkable(x: number, z: number): boolean {
+    const W = HALF_X - 0.6;
+    const bh = Math.max(this.bridgeHalf - 0.6, 1);
+    if (z >= -HALF_Z + 1 && z <= RIVER_NEAR) return Math.abs(x) <= W; // street
+    if (z > RIVER_NEAR && z < RIVER_FAR) return Math.abs(x) <= bh; // bridge corridor
+    if (z >= RIVER_FAR && z <= FAR_BANK_MAX_Z) return Math.abs(x) <= W; // far plaza
+    return false;
+  }
+
+  /** Push a point out of every solid static collider (circle-based). */
+  private collide(x: number, z: number): { x: number; z: number } {
+    const pr = 0.45;
+    for (const c of this.colliders) {
+      const dx = x - c.x;
+      const dz = z - c.z;
+      const dist = Math.hypot(dx, dz);
+      const minD = c.r + pr;
+      if (dist < minD) {
+        if (dist > 1e-3) {
+          x = c.x + (dx / dist) * minD;
+          z = c.z + (dz / dist) * minD;
+        } else {
+          x = c.x + minD;
+        }
+      }
+    }
+    return { x, z };
+  }
+
+  /** Move the player by (dx,dz) with wall sliding + solid-prop collision. */
+  private stepPlayer(dx: number, dz: number): void {
+    const cx = this.playerPos.x;
+    const cz = this.playerPos.z;
+    let nx = cx + dx;
+    let nz = cz + dz;
+    if (!this.isWalkable(nx, nz)) {
+      // slide along whichever axis stays walkable
+      if (this.isWalkable(cx + dx, cz)) nz = cz;
+      else if (this.isWalkable(cx, cz + dz)) nx = cx;
+      else {
+        nx = cx;
+        nz = cz;
+      }
+    }
+    const res = this.collide(nx, nz);
+    this.playerPos.x = res.x;
+    this.playerPos.z = res.z;
   }
 
   private updateEffects(dt: number): void {
@@ -1506,8 +1605,11 @@ export class GameEngine {
     if (dir.lengthSq() > 0.01) {
       dir.normalize();
       const sp = cop.speed * (this.copSuspicion > 0.4 ? 1.05 : 0.8);
-      cop.group.position.x = clamp(cop.group.position.x + dir.x * sp * dt, -HALF_X + 1, HALF_X - 1);
-      cop.group.position.z = clamp(cop.group.position.z + dir.z * sp * dt, -HALF_Z + 2, HALF_Z - 2);
+      const nx = clamp(cop.group.position.x + dir.x * sp * dt, -HALF_X + 1, HALF_X - 1);
+      const nz = clamp(cop.group.position.z + dir.z * sp * dt, -HALF_Z + 2, HALF_Z - 2);
+      const res = this.collide(nx, nz);
+      cop.group.position.x = res.x;
+      cop.group.position.z = res.z;
       cop.group.rotation.y = Math.atan2(dir.x, dir.z);
     }
 
@@ -1531,8 +1633,13 @@ export class GameEngine {
     if (dir.lengthSq() > 0.01) {
       dir.normalize();
       const sp = a.speed * (a.fleeing ? 1.8 : 1);
-      a.group.position.x = clamp(a.group.position.x + dir.x * sp * dt, -HALF_X + 1, HALF_X - 1);
-      a.group.position.z = clamp(a.group.position.z + dir.z * sp * dt, -HALF_Z + 2, HALF_Z - 2);
+      const nx = clamp(a.group.position.x + dir.x * sp * dt, -HALF_X + 1, HALF_X - 1);
+      const nz = clamp(a.group.position.z + dir.z * sp * dt, -HALF_Z + 2, HALF_Z - 2);
+      const res = this.collide(nx, nz);
+      // if blocked by a solid prop, pick a new wander target next frame
+      if (Math.hypot(res.x - nx, res.z - nz) > 0.3) a.wander = this.randomPoint();
+      a.group.position.x = res.x;
+      a.group.position.z = res.z;
       a.group.rotation.y = Math.atan2(dir.x, dir.z);
     }
   }
@@ -2018,7 +2125,7 @@ export class GameEngine {
   /* --- entity sync --- */
 
   private syncRemote(
-    players: { id: string; x: number; z: number; yaw: number; alive: boolean; isCop: boolean; snatching: boolean }[],
+    players: { id: string; x: number; z: number; yaw: number; alive: boolean; isCop: boolean; snatching: boolean; invisible: boolean }[],
   ): void {
     const seen = new Set<string>();
     for (const p of players) {
@@ -2042,7 +2149,7 @@ export class GameEngine {
         const a = this.makePerson(p.isCop ? "cop" : "civilian");
         r = {
           group: a.group, marker: a.marker, tx: p.x, tz: p.z, tyaw: p.yaw,
-          alive: p.alive, isCop: p.isCop, snatching: false,
+          alive: p.alive, isCop: p.isCop, snatching: false, invisible: false,
         };
         a.group.position.set(p.x, 0, p.z);
         this.remote.set(p.id, r);
@@ -2051,7 +2158,9 @@ export class GameEngine {
       r.tz = p.z;
       r.tyaw = p.yaw;
       r.alive = p.alive;
-      r.group.visible = p.alive;
+      r.invisible = p.invisible;
+      // A vanished player disappears for everyone else (the deception power).
+      r.group.visible = p.alive && !p.invisible;
       // Play the snatch animation on this avatar for every player to see.
       if (r.snatching !== p.snatching) {
         r.snatching = p.snatching;
@@ -2265,8 +2374,7 @@ export class GameEngine {
     if (this.keys["KeyA"] || this.keys["ArrowLeft"]) move.sub(right);
     const speed = this.baseSpeed * (this.hasEffect("speed") ? 1.7 : 1);
     if (move.lengthSq() > 0) move.normalize().multiplyScalar(speed);
-    this.playerPos.x = clamp(this.playerPos.x + move.x * dt, -HALF_X + 1, HALF_X - 1);
-    this.playerPos.z = clamp(this.playerPos.z + move.z * dt, -HALF_Z + 2, HALF_Z - 2);
+    this.stepPlayer(move.x * dt, move.z * dt);
   }
 
   private resolveOnlinePickup(): void {

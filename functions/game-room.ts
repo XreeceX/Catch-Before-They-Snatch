@@ -473,6 +473,8 @@ export class GameRoom extends DurableObject<Env> {
       // Broadcast so every client can play the snatch animation and the cop can
       // see an arrow hint pointing at the in-progress theft.
       snatching: p.snatching,
+      // Vanish power-up: while active, every other client hides this avatar.
+      invisible: now < p.invisibleUntil,
     }));
     const msg = JSON.stringify({
       t: "state",

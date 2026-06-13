@@ -9,7 +9,17 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
  *  the engine drops into the world.
  * ------------------------------------------------------------------ */
 
-export type PropKind = "buildingA" | "buildingB" | "lamp" | "crate" | "road";
+export type PropKind =
+  | "buildingA"
+  | "buildingB"
+  | "lamp"
+  | "crate"
+  | "road"
+  | "bus"
+  | "phonebox"
+  | "londonEye"
+  | "bigBen"
+  | "smartphone";
 
 type AxisKey =
   | "positiveX" | "negativeX"
@@ -33,6 +43,19 @@ const BUILDING_B = `${R2}/1a48df9f-9858-4fb6-a449-4e0d1c733cb8`;
 const LAMP = `${R2}/7ed69813-75a1-484b-81eb-9242e1788e66`;
 const CRATE = `${R2}/ac60ef7f-de27-41af-9b1b-172c714e7d1b`;
 const ROAD = `${R2}/32aba5c0-5798-4a0e-9e7f-8c28c54872b1`;
+// Filled in after Meshy generation completes (see waitTask results). Until then
+// these stay PENDING and the loader skips them, so the engine uses procedural
+// fallbacks for the bus, phone box, landmarks and smartphone.
+const BUS = `${R2}/8a68a2d6-8f4d-40e8-bb26-90d98ceec7ed`;
+const PHONEBOX = `${R2}/11364c24-5c42-4181-aca4-3cd935fad8b1`;
+const LONDON_EYE = `${R2}/c81e9a27-9a5e-48ad-882e-22ed3dcdda2f`;
+const BIG_BEN = `${R2}/ceb61531-356b-415e-93fa-f69f40a0ca52`;
+const SMARTPHONE = `${R2}/a624a58d-14d8-4bd7-8f42-74fb0da5c376`;
+
+/** A url that has not yet been wired to a real generated GLB. */
+function pending(url: string): boolean {
+  return url.startsWith("PENDING");
+}
 
 const PROPS: Record<PropKind, PropDef> = {
   buildingA: { url: `${BUILDING_A}.glb`, fit: "height", size: 18, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
@@ -40,6 +63,13 @@ const PROPS: Record<PropKind, PropDef> = {
   lamp: { url: `${LAMP}.glb`, fit: "height", size: 6, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   crate: { url: `${CRATE}.glb`, fit: "longest", size: 1.3, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   road: { url: `${ROAD}.glb`, fit: "longest", size: 12, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
+  // Bus front faces -X; buses travel toward +Z, so the correction maps -X → +Z.
+  bus: { url: `${BUS}.glb`, fit: "longest", size: 12, localFrontAxis: "negativeX", localUpAxis: "positiveY" },
+  phonebox: { url: `${PHONEBOX}.glb`, fit: "height", size: 2.6, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
+  // Landmarks are directionless (hasIntrinsicFront=false) — no yaw correction.
+  londonEye: { url: `${LONDON_EYE}.glb`, fit: "height", size: 44, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
+  bigBen: { url: `${BIG_BEN}.glb`, fit: "height", size: 60, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
+  smartphone: { url: `${SMARTPHONE}.glb`, fit: "longest", size: 0.16, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
 };
 
 const AXIS: Record<AxisKey, THREE.Vector3> = {
@@ -82,21 +112,32 @@ export class PropModels {
     return this.loaded;
   }
 
-  /** True only when real generated URLs have been wired in. */
+  /** True only when at least one real generated URL has been wired in. */
   get enabled(): boolean {
-    return !PROPS.buildingA.url.includes("__");
+    return (Object.keys(PROPS) as PropKind[]).some((k) => !pending(PROPS[k].url));
   }
 
   async load(): Promise<void> {
     if (!this.enabled || this.loaded) return;
     await Promise.all(
-      (Object.keys(PROPS) as PropKind[]).map(async (kind) => {
-        const def = PROPS[kind];
-        const gltf = await this.loader.loadAsync(def.url);
-        this.templates.set(kind, this.normalise(gltf.scene, def));
-      }),
+      (Object.keys(PROPS) as PropKind[])
+        .filter((kind) => !pending(PROPS[kind].url))
+        .map(async (kind) => {
+          const def = PROPS[kind];
+          try {
+            const gltf = await this.loader.loadAsync(def.url);
+            this.templates.set(kind, this.normalise(gltf.scene, def));
+          } catch (err) {
+            console.warn(`prop ${kind} failed to load`, err);
+          }
+        }),
     );
     this.loaded = true;
+  }
+
+  /** Whether a given prop kind has a usable generated template loaded. */
+  has(kind: PropKind): boolean {
+    return this.templates.has(kind);
   }
 
   private normalise(scene: THREE.Object3D, def: PropDef): PropTemplate {

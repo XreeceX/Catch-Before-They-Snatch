@@ -21,9 +21,10 @@ type PowerKind = "track_cop" | "speed" | "invisible" | "decoy" | "reveal" | "tra
 const ROUND_TIME = 240;
 const PHONE_TARGET = 12;
 const MAX_STRIKES = 3;
-const HALF_X = 26;
-const HALF_Z = 44;
+const HALF_X = 44;
+const HALF_Z = 80;
 const COP_CATCH_RANGE = 3.2;
+const SNATCH_MS = 3000; // hold-E duration for a successful snatch
 const TRAP_RANGE = 1.5;
 const TICK_MS = 66; // ~15 Hz authoritative broadcast
 const MAX_PLAYERS = 6;
@@ -43,6 +44,8 @@ interface Player {
   phones: number;
   invisibleUntil: number;
   frozenUntil: number;
+  snatching: boolean;
+  snatchUntil: number;
 }
 
 interface Crate {
@@ -129,6 +132,8 @@ export class GameRoom extends DurableObject<Env> {
         phones: 0,
         invisibleUntil: 0,
         frozenUntil: 0,
+        snatching: false,
+        snatchUntil: 0,
       });
     }
     if (!this.hostId) this.hostId = playerId;
@@ -183,11 +188,15 @@ export class GameRoom extends DurableObject<Env> {
         this.startRound();
         return;
       }
-      case "snatch": {
+      case "snatchStart": {
         if (this.status !== "playing" || me.role !== "snatcher" || !me.alive) return;
-        me.phones += 1;
-        this.teamPhones += 1;
-        this.event(`${me.name} snatched a phone`);
+        if (Date.now() < me.frozenUntil) return;
+        me.snatching = true;
+        me.snatchUntil = Date.now() + SNATCH_MS;
+        return;
+      }
+      case "snatchStop": {
+        me.snatching = false;
         return;
       }
       case "apprehend": {
@@ -243,6 +252,8 @@ export class GameRoom extends DurableObject<Env> {
       p.phones = 0;
       p.invisibleUntil = 0;
       p.frozenUntil = 0;
+      p.snatching = false;
+      p.snatchUntil = 0;
       const sp = spawnPoint();
       p.x = sp.x;
       p.z = sp.z;
@@ -387,6 +398,21 @@ export class GameRoom extends DurableObject<Env> {
       // expire decoys
       this.decoys = this.decoys.filter((d) => d.until > now);
 
+      // complete held snatches (credit one phone per 3s hold)
+      for (const p of this.players.values()) {
+        if (!p.snatching) continue;
+        if (!p.alive || p.role !== "snatcher") {
+          p.snatching = false;
+          continue;
+        }
+        if (now >= p.snatchUntil) {
+          p.phones += 1;
+          this.teamPhones += 1;
+          p.snatching = false;
+          this.event(`${p.name} snatched a phone`);
+        }
+      }
+
       // bear traps freeze snatchers
       for (const trap of [...this.traps]) {
         for (const p of this.players.values()) {
@@ -444,6 +470,9 @@ export class GameRoom extends DurableObject<Env> {
       // The cop is meant to be identifiable; only the cop's role is revealed.
       // Snatchers stay hidden among civilians, preserving the deception.
       isCop: p.role === "cop",
+      // Broadcast so every client can play the snatch animation and the cop can
+      // see an arrow hint pointing at the in-progress theft.
+      snatching: p.snatching,
     }));
     const msg = JSON.stringify({
       t: "state",

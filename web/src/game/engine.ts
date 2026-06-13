@@ -51,6 +51,10 @@ export interface HudState {
   toastKey: number;
   winner: Winner;
   caught: boolean;
+  /** 0..1 charge while a snatcher holds E to steal a phone. */
+  snatchProgress: number;
+  /** Bearings (radians, 0 = ahead, + = right) to active snatches — cop only. */
+  snatchAlerts: number[];
 }
 
 const POWER_META: Record<PowerKind, PowerMeta> = {
@@ -68,7 +72,8 @@ const COP_POWERS: PowerKind[] = ["reveal", "speed", "trap"];
 /** Minimal surface the engine needs from the netcode client (avoids a circular import). */
 export interface NetSender {
   sendPos(x: number, z: number, yaw: number): void;
-  snatch(): void;
+  snatchStart(): void;
+  snatchStop(): void;
   apprehend(targetId: string | null): void;
   pickup(crateId: string): void;
   use(kind: PowerKind): void;
@@ -89,7 +94,7 @@ export interface NetState {
   snatchersTotal: number;
   snatchersLeft: number;
   winner: Winner;
-  players: { id: string; x: number; z: number; yaw: number; alive: boolean; isCop: boolean }[];
+  players: { id: string; x: number; z: number; yaw: number; alive: boolean; isCop: boolean; snatching: boolean }[];
   crates: NetEntity[];
   traps: NetEntity[];
   decoys: NetEntity[];
@@ -98,11 +103,13 @@ export interface NetState {
 const ROUND_TIME = 240; // 4 minutes
 const PHONE_TARGET = 8;
 const MAX_STRIKES = 3;
-const HALF_X = 26;
-const HALF_Z = 44;
+const HALF_X = 44;
+const HALF_Z = 80;
 const EYE = 1.7;
 const INTERACT_RANGE = 3.2;
 const COP_CATCH_RANGE = 2.4;
+const SNATCH_TIME = 3; // seconds to hold E for a successful snatch
+const CROWD_SIZE = 30;
 
 const CLOTHES = [
   0xb23a48, 0x2e4057, 0x6a8d73, 0xd9a566, 0x8e5572,
@@ -126,13 +133,17 @@ interface Agent {
   type: AgentType;
   alive: boolean;
   hasPhone: boolean;
-  phoneMesh: THREE.Mesh;
+  phoneMesh: THREE.Object3D;
   wander: THREE.Vector3;
   speed: number;
   trapped: number;
   stealCd: number;
   fleeing: boolean;
   marker: THREE.Mesh;
+  /** AI snatcher: currently performing a 3s snatch. */
+  snatching: boolean;
+  snatchT: number;
+  snatchTarget: Agent | null;
 }
 
 /** Visual registry entry: tracks a spawned person's animated Meshy model. */
@@ -164,6 +175,7 @@ interface RemoteAvatar {
   tyaw: number;
   alive: boolean;
   isCop: boolean;
+  snatching: boolean;
 }
 
 function kindFor(type: AgentType): CharKind {
@@ -227,6 +239,24 @@ function pavementTexture(): THREE.Texture {
   return tex;
 }
 
+function waterTexture(): THREE.Texture {
+  const { c, ctx } = makeCanvas(256);
+  ctx.fillStyle = "#1f4f6b";
+  ctx.fillRect(0, 0, 256, 256);
+  // glittering ripples
+  for (let i = 0; i < 1400; i++) {
+    const a = rand(0.05, 0.32);
+    const g = Math.floor(rand(120, 210));
+    ctx.fillStyle = `rgba(${g},${g + 20},${g + 35},${a})`;
+    const w = rand(2, 8);
+    ctx.fillRect(Math.random() * 256, Math.random() * 256, w, 1.5);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(8, 6);
+  return tex;
+}
+
 function brickTexture(base: string, accent: string): THREE.Texture {
   const { c, ctx } = makeCanvas(256);
   ctx.fillStyle = base;
@@ -286,6 +316,7 @@ export class GameEngine {
   private powerups: Powerup[] = [];
   private traps: TrapEntity[] = [];
   private buses: THREE.Group[] = [];
+  private thamesWater: THREE.Mesh | null = null;
 
   // generated character models
   private charModels = new CharacterModels();
@@ -339,6 +370,12 @@ export class GameEngine {
   private posSendTimer = 0;
   private snatchCd = 0;
 
+  // snatch (hold-E) state
+  private snatchCharge = 0; // seconds the player has held E on a valid target
+  private snatching = false; // is the local player actively snatching (online send dedupe)
+  private snatchAlerts: number[] = []; // bearings to active snatches (cop HUD)
+  private snatchBeacons: THREE.Mesh[] = []; // reusable 3D markers above active snatches
+
   constructor(canvas: HTMLCanvasElement, setHud: (s: HudState) => void) {
     this.setHud = setHud;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -350,9 +387,9 @@ export class GameEngine {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x9fb0c3);
-    this.scene.fog = new THREE.Fog(0x9fb0c3, 60, 150);
+    this.scene.fog = new THREE.Fog(0x9fb0c3, 90, 230);
 
-    this.camera = new THREE.PerspectiveCamera(72, 1, 0.1, 400);
+    this.camera = new THREE.PerspectiveCamera(72, 1, 0.1, 600);
     this.camera.position.copy(this.playerPos);
 
     this.buildWorld();
@@ -368,7 +405,10 @@ export class GameEngine {
     // load generated static props, then rebuild the street with them.
     void this.propModels
       .load()
-      .then(() => this.buildStreet())
+      .then(() => {
+        this.buildStreet();
+        this.upgradePhones();
+      })
       .catch((err) => console.warn("prop models failed to load", err));
   }
 
@@ -380,33 +420,25 @@ export class GameEngine {
     this.scene.add(hemi);
 
     const sun = new THREE.DirectionalLight(0xfff2dc, 2.1);
-    sun.position.set(40, 70, 30);
+    sun.position.set(70, 110, 60);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -70;
-    sun.shadow.camera.right = 70;
-    sun.shadow.camera.top = 70;
-    sun.shadow.camera.bottom = -70;
-    sun.shadow.camera.far = 200;
+    sun.shadow.camera.left = -HALF_X - 20;
+    sun.shadow.camera.right = HALF_X + 20;
+    sun.shadow.camera.top = HALF_Z + 20;
+    sun.shadow.camera.bottom = -HALF_Z - 20;
+    sun.shadow.camera.far = 320;
     sun.shadow.bias = -0.0004;
     this.scene.add(sun);
 
-    // street set (road, pavements, buildings, lamps) — rebuilt once
-    // generated prop models finish loading.
+    // street set (road, pavements, buildings, lamps, phone boxes, river,
+    // landmarks, buses) — rebuilt once generated prop models finish loading.
     this.scene.add(this.streetGroup);
     this.buildStreet();
 
-    // a couple of iconic red buses (slow movers)
-    for (let i = 0; i < 2; i++) {
-      const bus = this.makeBus();
-      bus.position.set((i === 0 ? -1 : 1) * 5, 0, i === 0 ? -10 : 20);
-      this.buses.push(bus);
-      this.scene.add(bus);
-    }
-
     // sky dome gradient via large sphere
     const sky = new THREE.Mesh(
-      new THREE.SphereGeometry(200, 24, 16),
+      new THREE.SphereGeometry(320, 24, 16),
       new THREE.MeshBasicMaterial({ side: THREE.BackSide, vertexColors: true })
     );
     const geo = sky.geometry as THREE.SphereGeometry;
@@ -415,7 +447,7 @@ export class GameEngine {
     const bot = new THREE.Color(0xcdd9e3);
     const pos = geo.attributes.position;
     for (let i = 0; i < pos.count; i++) {
-      const y = pos.getY(i) / 200;
+      const y = pos.getY(i) / 320;
       const col = bot.clone().lerp(top, clamp(y * 0.5 + 0.5, 0, 1));
       colors.push(col.r, col.g, col.b);
     }
@@ -438,7 +470,135 @@ export class GameEngine {
     this.buildRoad();
     this.buildBuildings();
     this.buildLamps();
+    this.buildPhoneBoxes();
+    this.buildThames();
     this.buildEndCaps();
+    this.rebuildBuses();
+  }
+
+  /** Scatter classic red telephone boxes along both pavements. */
+  private buildPhoneBoxes(): void {
+    const generated = this.propModels.has("phonebox");
+    for (let z = -HALF_Z + 16; z < HALF_Z - 6; z += 22) {
+      for (const side of [-1, 1]) {
+        const x = side * (HALF_X - 8.5);
+        const box = generated ? this.propModels.create("phonebox") : this.makePhoneBoxFallback();
+        if (!box) continue;
+        box.position.set(x, 0, z);
+        box.rotation.y = side === -1 ? Math.PI / 2 : -Math.PI / 2;
+        this.streetGroup.add(box);
+      }
+    }
+  }
+
+  private makePhoneBoxFallback(): THREE.Group {
+    const g = new THREE.Group();
+    const red = new THREE.MeshStandardMaterial({ color: 0xb01818, roughness: 0.5, metalness: 0.2 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.5, 1.1), red);
+    body.position.y = 1.25;
+    body.castShadow = true;
+    g.add(body);
+    const glass = new THREE.MeshStandardMaterial({ color: 0x223, roughness: 0.1, metalness: 0.4, transparent: true, opacity: 0.5 });
+    for (const face of [0, 1, 2, 3]) {
+      const pane = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.5, 0.06), glass);
+      const a = (face * Math.PI) / 2;
+      pane.position.set(Math.sin(a) * 0.56, 1.5, Math.cos(a) * 0.56);
+      pane.rotation.y = a;
+      g.add(pane);
+    }
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.3, 1.2), red);
+    roof.position.y = 2.65;
+    g.add(roof);
+    return g;
+  }
+
+  /** Build the River Thames beyond the riverside end, with the London Eye and
+   *  Big Ben rising on the far bank as a skyline. */
+  private buildThames(): void {
+    const riverZ = HALF_Z + 30;
+    const water = new THREE.Mesh(
+      new THREE.PlaneGeometry(HALF_X * 4, 120, 1, 1),
+      new THREE.MeshStandardMaterial({
+        map: waterTexture(),
+        color: 0x2a5d7c,
+        roughness: 0.25,
+        metalness: 0.5,
+        emissive: 0x0a2436,
+        emissiveIntensity: 0.3,
+      }),
+    );
+    water.rotation.x = -Math.PI / 2;
+    water.position.set(0, 0.05, riverZ);
+    this.streetGroup.add(water);
+    this.thamesWater = water;
+
+    // landmarks on the far bank
+    const eye = this.propModels.has("londonEye")
+      ? this.propModels.create("londonEye")
+      : this.makeEyeFallback();
+    if (eye) {
+      eye.position.set(-HALF_X * 0.5, 0, riverZ + 38);
+      eye.rotation.y = Math.PI;
+      this.streetGroup.add(eye);
+    }
+    const ben = this.propModels.has("bigBen")
+      ? this.propModels.create("bigBen")
+      : this.makeBenFallback();
+    if (ben) {
+      ben.position.set(HALF_X * 0.45, 0, riverZ + 40);
+      ben.rotation.y = Math.PI;
+      this.streetGroup.add(ben);
+    }
+  }
+
+  private makeEyeFallback(): THREE.Group {
+    const g = new THREE.Group();
+    const mat = new THREE.MeshStandardMaterial({ color: 0xdfe7ee, roughness: 0.4, metalness: 0.6 });
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(18, 0.6, 8, 48), mat);
+    ring.position.y = 20;
+    g.add(ring);
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      const spoke = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 18, 6), mat);
+      spoke.position.set(Math.cos(a) * 9, 20 + Math.sin(a) * 9, 0);
+      spoke.rotation.z = a + Math.PI / 2;
+      g.add(spoke);
+    }
+    return g;
+  }
+
+  private makeBenFallback(): THREE.Group {
+    const g = new THREE.Group();
+    const stone = new THREE.MeshStandardMaterial({ color: 0xb09a5e, roughness: 0.9 });
+    const tower = new THREE.Mesh(new THREE.BoxGeometry(7, 44, 7), stone);
+    tower.position.y = 22;
+    g.add(tower);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(5.4, 12, 4), new THREE.MeshStandardMaterial({ color: 0x3c6e57, roughness: 0.8 }));
+    roof.position.y = 50;
+    roof.rotation.y = Math.PI / 4;
+    g.add(roof);
+    const face = new THREE.MeshStandardMaterial({ color: 0xf4ecd0, emissive: 0xe8dca0, emissiveIntensity: 0.4 });
+    for (const a of [0, 1, 2, 3]) {
+      const clock = new THREE.Mesh(new THREE.CircleGeometry(2, 18), face);
+      const ang = (a * Math.PI) / 2;
+      clock.position.set(Math.sin(ang) * 3.6, 40, Math.cos(ang) * 3.6);
+      clock.rotation.y = ang;
+      g.add(clock);
+    }
+    return g;
+  }
+
+  /** (Re)create the moving red buses, using the generated model when loaded. */
+  private rebuildBuses(): void {
+    for (const bus of this.buses) this.scene.remove(bus);
+    this.buses = [];
+    const lanes = [-HALF_X * 0.45, HALF_X * 0.2, -HALF_X * 0.1];
+    for (let i = 0; i < 3; i++) {
+      const bus = this.makeBus();
+      bus.position.set(lanes[i], 0, -HALF_Z + i * 28);
+      this.buses.push(bus);
+      this.scene.add(bus);
+    }
   }
 
   private buildRoad(): void {
@@ -600,6 +760,13 @@ export class GameEngine {
   }
 
   private makeBus(): THREE.Group {
+    if (this.propModels.has("bus")) {
+      const gen = this.propModels.create("bus");
+      if (gen) {
+        // generated bus front faces +Z; buses travel toward +Z.
+        return gen;
+      }
+    }
     const g = new THREE.Group();
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(3, 3.4, 9),
@@ -676,11 +843,8 @@ export class GameEngine {
     }
 
     // phone (held / stealable)
-    const phone = new THREE.Mesh(
-      new THREE.BoxGeometry(0.14, 0.26, 0.04),
-      new THREE.MeshStandardMaterial({ color: 0x111, emissive: 0x55ccff, emissiveIntensity: 0.7 })
-    );
-    phone.position.set(0.32, 1.1, 0.18);
+    const phone = this.makePhone();
+    phone.position.set(0.3, 1.05, 0.2);
     phone.visible = type === "civilian";
     g.add(phone);
 
@@ -706,11 +870,45 @@ export class GameEngine {
       stealCd: rand(4, 10),
       fleeing: false,
       marker,
+      snatching: false,
+      snatchT: 0,
+      snatchTarget: null,
     };
     g.position.copy(this.randomPoint());
     this.scene.add(g);
     this.registerPerson(g, body, kindFor(type));
     return a;
+  }
+
+  /** A held smartphone: the generated model when available, else a glowing slab. */
+  private makePhone(): THREE.Object3D {
+    if (this.propModels.has("smartphone")) {
+      const g = this.propModels.create("smartphone");
+      if (g) return g;
+    }
+    return new THREE.Mesh(
+      new THREE.BoxGeometry(0.14, 0.26, 0.04),
+      new THREE.MeshStandardMaterial({ color: 0x111, emissive: 0x55ccff, emissiveIntensity: 0.7 }),
+    );
+  }
+
+  /** Swap procedural phones for the generated smartphone once it has loaded. */
+  private upgradePhones(): void {
+    if (!this.propModels.has("smartphone")) return;
+    for (const a of [...this.agents, ...this.crowd]) {
+      if (!a.hasPhone) continue;
+      a.group.remove(a.phoneMesh);
+      const phone = this.makePhone();
+      phone.position.set(0.3, 1.05, 0.2);
+      a.group.add(phone);
+      a.phoneMesh = phone;
+    }
+  }
+
+  /** Toggle the looping snatch animation on a registered person's model. */
+  private setSnatchAnim(group: THREE.Object3D, active: boolean): void {
+    const p = this.people.find((x) => x.group === group);
+    p?.char?.setSnatch(active);
   }
 
   /** Track a person for animated-model upgrade + per-frame locomotion. */
@@ -953,6 +1151,7 @@ export class GameEngine {
     this.movePlayer(dt);
     this.updateEffects(dt);
     this.updateAgents(dt);
+    this.updateSnatch(dt);
     this.updatePowerups(dt);
     this.updateBuses(dt);
     this.updateMarkers();
@@ -1043,23 +1242,101 @@ export class GameEngine {
 
       // AI snatcher behaviour
       if (a.type === "snatcher") {
-        a.stealCd -= dt;
-        if (this.role === "cop" && cop === null) {
-          // flee from player cop if close
-          const d = a.group.position.distanceTo(playerGround);
-          a.fleeing = d < 9;
-        }
-        if (a.fleeing) {
-          const away = a.group.position.clone().sub(playerGround).setY(0).normalize();
-          a.wander = a.group.position.clone().add(away.multiplyScalar(8));
-        } else if (a.stealCd <= 0) {
-          // try to steal from nearest civilian
-          a.stealCd = rand(6, 12);
+        if (this.updateAiSnatcher(a, dt, playerGround, cop === null && this.role === "cop")) {
+          continue; // standing still mid-snatch
         }
       }
 
       // wander
       this.wanderAgent(a, dt);
+    }
+  }
+
+  /** AI snatcher: flee the player cop, or hold a 3s snatch on a nearby civilian.
+   *  Returns true while frozen in a snatch (caller skips wandering). */
+  private updateAiSnatcher(a: Agent, dt: number, playerGround: THREE.Vector3, copIsPlayer: boolean): boolean {
+    a.stealCd -= dt;
+    if (copIsPlayer) {
+      const d = a.group.position.distanceTo(playerGround);
+      a.fleeing = d < 9;
+    }
+
+    if (a.snatching) {
+      const tgt = a.snatchTarget;
+      if (a.fleeing || !tgt || !tgt.hasPhone || !tgt.alive || a.group.position.distanceTo(tgt.group.position) > 3.5) {
+        a.snatching = false;
+        a.snatchTarget = null;
+        this.setSnatchAnim(a.group, false);
+        return false;
+      }
+      // face the victim while snatching
+      const dir = tgt.group.position.clone().sub(a.group.position).setY(0);
+      if (dir.lengthSq() > 0.01) a.group.rotation.y = Math.atan2(dir.x, dir.z);
+      a.snatchT += dt;
+      this.setSnatchAnim(a.group, true);
+      if (a.snatchT >= SNATCH_TIME) {
+        tgt.hasPhone = false;
+        tgt.phoneMesh.visible = false;
+        a.snatching = false;
+        a.snatchTarget = null;
+        a.stealCd = rand(9, 16);
+        this.setSnatchAnim(a.group, false);
+      }
+      return true;
+    }
+
+    if (a.fleeing) {
+      const away = a.group.position.clone().sub(playerGround).setY(0).normalize();
+      a.wander = a.group.position.clone().add(away.multiplyScalar(8));
+      return false;
+    }
+
+    if (a.stealCd <= 0) {
+      const victim = this.agents.find(
+        (c) => c.type === "civilian" && c.alive && c.hasPhone && a.group.position.distanceTo(c.group.position) < 3,
+      );
+      if (victim) {
+        a.snatching = true;
+        a.snatchTarget = victim;
+        a.snatchT = 0;
+      } else {
+        a.stealCd = rand(2, 5);
+      }
+    }
+    return false;
+  }
+
+  /** Movement keys currently pressed (used to cancel a snatch on the move). */
+  private isMovingInput(): boolean {
+    return !!(
+      this.keys["KeyW"] || this.keys["KeyA"] || this.keys["KeyS"] || this.keys["KeyD"] ||
+      this.keys["ArrowUp"] || this.keys["ArrowDown"] || this.keys["ArrowLeft"] || this.keys["ArrowRight"]
+    );
+  }
+
+  /** Offline: hold E (still, aiming at a civilian with a phone) to snatch over 3s. */
+  private updateSnatch(dt: number): void {
+    if (this.role !== "snatcher") {
+      this.snatchCharge = 0;
+      return;
+    }
+    const frozen = this.effects.some((e) => e.kind === "trap");
+    const target = this.nearestAgentInFront();
+    const valid =
+      !!this.keys["KeyE"] && !this.isMovingInput() && !frozen &&
+      !!target && target.type === "civilian" && target.hasPhone;
+    if (valid && target) {
+      this.snatchCharge += dt;
+      if (this.snatchCharge >= SNATCH_TIME) {
+        target.hasPhone = false;
+        target.phoneMesh.visible = false;
+        this.phonesStolen++;
+        this.copSuspicion = Math.min(1, this.copSuspicion + 0.3);
+        this.fire(`Phone snatched! ${this.phonesStolen}/${PHONE_TARGET}`);
+        this.snatchCharge = 0;
+      }
+    } else {
+      this.snatchCharge = 0;
     }
   }
 
@@ -1195,8 +1472,19 @@ export class GameEngine {
 
   private updateBuses(dt: number): void {
     for (const bus of this.buses) {
-      bus.position.z += dt * 4;
-      if (bus.position.z > HALF_Z + 6) bus.position.z = -HALF_Z - 6;
+      bus.position.z += dt * 5;
+      if (bus.position.z > HALF_Z - 2) bus.position.z = -HALF_Z - 6;
+    }
+  }
+
+  private updateThames(dt: number): void {
+    const water = this.thamesWater;
+    if (!water) return;
+    const mat = water.material as THREE.MeshStandardMaterial;
+    const map = mat.map;
+    if (map) {
+      map.offset.x = (map.offset.x + dt * 0.015) % 1;
+      map.offset.y = (map.offset.y + dt * 0.03) % 1;
     }
   }
 
@@ -1221,6 +1509,50 @@ export class GameEngine {
     for (const a of this.agents) {
       a.marker.visible = reveal && a.type === "snatcher" && a.alive;
     }
+
+    // cop arrow hint: beacons + screen bearings to any AI snatcher mid-snatch
+    if (this.role === "cop") {
+      const locs = this.agents
+        .filter((a) => a.type === "snatcher" && a.alive && a.snatching)
+        .map((a) => ({ x: a.group.position.x, z: a.group.position.z }));
+      this.updateSnatchHints(locs);
+    } else {
+      this.updateSnatchHints([]);
+    }
+  }
+
+  /** Position 3D beacons over each active snatch and compute screen bearings to
+   *  them (relative to the camera) for the cop's on-screen arrow hints. */
+  private updateSnatchHints(locs: { x: number; z: number }[]): void {
+    while (this.snatchBeacons.length < locs.length) {
+      const b = new THREE.Mesh(
+        new THREE.ConeGeometry(0.6, 1.8, 4),
+        new THREE.MeshBasicMaterial({ color: 0xff2e63, transparent: true, opacity: 0.92 }),
+      );
+      b.rotation.x = Math.PI;
+      this.scene.add(b);
+      this.snatchBeacons.push(b);
+    }
+    const bob = Math.sin(performance.now() * 0.006) * 0.3;
+    for (let i = 0; i < this.snatchBeacons.length; i++) {
+      const b = this.snatchBeacons[i];
+      if (i < locs.length) {
+        b.visible = true;
+        b.position.set(locs[i].x, 3.5 + bob, locs[i].z);
+        b.rotation.y += 0.06;
+      } else {
+        b.visible = false;
+      }
+    }
+    const fx = -Math.sin(this.yaw);
+    const fz = -Math.cos(this.yaw);
+    const rx = Math.cos(this.yaw);
+    const rz = -Math.sin(this.yaw);
+    this.snatchAlerts = locs.map((l) => {
+      const dx = l.x - this.playerPos.x;
+      const dz = l.z - this.playerPos.z;
+      return Math.atan2(dx * rx + dz * rz, dx * fx + dz * fz);
+    });
   }
 
   private resolveInteract(): void {
@@ -1228,28 +1560,19 @@ export class GameEngine {
       return;
     }
     this.interactQueued = false;
+    // Snatching is a hold-E action handled in updateSnatch; a single press/click
+    // only triggers the cop's apprehension.
+    if (this.role !== "cop") return;
     const target = this.nearestAgentInFront();
     if (!target) return;
-
-    if (this.role === "cop") {
-      if (target.type === "snatcher") {
-        target.alive = false;
-        target.group.visible = false;
-        this.fire("Snatcher apprehended!");
-      } else {
-        this.strikes++;
-        this.copSuspicion = 0;
-        this.fire(`Wrong! ${MAX_STRIKES - this.strikes} mistakes left`);
-      }
+    if (target.type === "snatcher") {
+      target.alive = false;
+      target.group.visible = false;
+      this.fire("Snatcher apprehended!");
     } else {
-      // snatcher steals a phone from a civilian
-      if (target.type === "civilian" && target.hasPhone) {
-        target.hasPhone = false;
-        target.phoneMesh.visible = false;
-        this.phonesStolen++;
-        this.copSuspicion = Math.min(1, this.copSuspicion + 0.25);
-        this.fire(`Phone snatched! ${this.phonesStolen}/${PHONE_TARGET}`);
-      }
+      this.strikes++;
+      this.copSuspicion = 0;
+      this.fire(`Wrong! ${MAX_STRIKES - this.strikes} mistakes left`);
     }
   }
 
@@ -1359,7 +1682,7 @@ export class GameEngine {
     if (this.role === "cop" && target && target.type !== "cop") {
       p = "Click / E — Apprehend";
     } else if (this.role === "snatcher" && target && target.type === "civilian" && target.hasPhone) {
-      p = "Click / E — Snatch phone";
+      p = this.snatchCharge > 0 ? "Hold E — Snatching…" : "Hold E — Snatch phone";
     }
     this.prompt = p;
   }
@@ -1548,7 +1871,9 @@ export class GameEngine {
 
   /* --- entity sync --- */
 
-  private syncRemote(players: { id: string; x: number; z: number; yaw: number; alive: boolean; isCop: boolean }[]): void {
+  private syncRemote(
+    players: { id: string; x: number; z: number; yaw: number; alive: boolean; isCop: boolean; snatching: boolean }[],
+  ): void {
     const seen = new Set<string>();
     for (const p of players) {
       if (p.id === this.myId) {
@@ -1569,7 +1894,10 @@ export class GameEngine {
         // Cop players use the police model so snatchers can identify them;
         // everyone else blends in with the civilian crowd.
         const a = this.makePerson(p.isCop ? "cop" : "civilian");
-        r = { group: a.group, marker: a.marker, tx: p.x, tz: p.z, tyaw: p.yaw, alive: p.alive, isCop: p.isCop };
+        r = {
+          group: a.group, marker: a.marker, tx: p.x, tz: p.z, tyaw: p.yaw,
+          alive: p.alive, isCop: p.isCop, snatching: false,
+        };
         a.group.position.set(p.x, 0, p.z);
         this.remote.set(p.id, r);
       }
@@ -1578,6 +1906,11 @@ export class GameEngine {
       r.tyaw = p.yaw;
       r.alive = p.alive;
       r.group.visible = p.alive;
+      // Play the snatch animation on this avatar for every player to see.
+      if (r.snatching !== p.snatching) {
+        r.snatching = p.snatching;
+        this.setSnatchAnim(r.group, p.snatching && p.alive);
+      }
     }
     for (const [id, r] of this.remote) {
       if (!seen.has(id)) {
@@ -1695,11 +2028,51 @@ export class GameEngine {
 
     this.resolveOnlinePickup();
     this.resolveOnlineInteract();
+    this.updateOnlineSnatch(dt);
     this.resolveOnlinePower();
     this.updateOnlineMarkers();
     this.evaluateOnlinePrompt();
     if (this.snatchCd > 0) this.snatchCd -= dt;
     this.pushHud();
+  }
+
+  /** Online: hold E (still, aiming at a civilian) to snatch over 3s. Start/stop
+   *  is sent to the server, which is authoritative for the heist score. */
+  private updateOnlineSnatch(dt: number): void {
+    if (this.role !== "snatcher" || this.caught) {
+      if (this.snatching) {
+        this.snatching = false;
+        this.snatchCharge = 0;
+        this.net?.snatchStop();
+      }
+      return;
+    }
+    const frozen = Date.now() < this.frozenUntil;
+    const target = this.nearestPersonInFront();
+    const victim = target && target.kind === "civilian" && target.agent.hasPhone ? target.agent : null;
+    const want = !!this.keys["KeyE"] && !this.isMovingInput() && !frozen && !!victim;
+
+    if (want && !this.snatching) {
+      this.snatching = true;
+      this.snatchCharge = 0;
+      this.net?.snatchStart();
+    } else if (!want && this.snatching) {
+      this.snatching = false;
+      this.snatchCharge = 0;
+      this.net?.snatchStop();
+    }
+
+    if (this.snatching && victim) {
+      this.snatchCharge += dt;
+      if (this.snatchCharge >= SNATCH_TIME) {
+        // server credits the team; hide the cosmetic phone locally and reset.
+        victim.hasPhone = false;
+        victim.phoneMesh.visible = false;
+        this.snatching = false;
+        this.snatchCharge = 0;
+        this.net?.snatchStop();
+      }
+    }
   }
 
   private moveOnlinePlayer(dt: number): void {
@@ -1733,19 +2106,12 @@ export class GameEngine {
     if (!this.interactQueued) return;
     this.interactQueued = false;
     if (this.caught || !this.net) return;
+    // Snatching is a hold-E action handled in updateOnlineSnatch; a press only
+    // triggers the cop's apprehension.
+    if (this.role !== "cop") return;
     const target = this.nearestPersonInFront();
-    if (this.role === "cop") {
-      if (!target) return;
-      this.net.apprehend(target.kind === "player" ? target.id : null);
-    } else {
-      if (this.snatchCd > 0) return;
-      if (target && target.kind === "civilian" && target.agent.hasPhone) {
-        target.agent.hasPhone = false;
-        target.agent.phoneMesh.visible = false;
-        this.snatchCd = 0.8;
-        this.net.snatch();
-      }
-    }
+    if (!target) return;
+    this.net.apprehend(target.kind === "player" ? target.id : null);
   }
 
   private nearestPersonInFront():
@@ -1845,6 +2211,17 @@ export class GameEngine {
     for (const [id, r] of this.remote) {
       r.marker.visible = revealing && this.revealIds.includes(id) && r.alive;
     }
+
+    // cop arrow hint: beacons + screen bearings to any player mid-snatch
+    if (this.role === "cop") {
+      const locs: { x: number; z: number }[] = [];
+      for (const r of this.remote.values()) {
+        if (r.snatching && r.alive) locs.push({ x: r.group.position.x, z: r.group.position.z });
+      }
+      this.updateSnatchHints(locs);
+    } else {
+      this.updateSnatchHints([]);
+    }
   }
 
   private evaluateOnlinePrompt(): void {
@@ -1857,7 +2234,7 @@ export class GameEngine {
     if (this.role === "cop" && target) {
       p = "Click / E — Apprehend";
     } else if (this.role === "snatcher" && target && target.kind === "civilian" && target.agent.hasPhone) {
-      p = "Click / E — Snatch phone";
+      p = this.snatching ? "Hold E — Snatching…" : "Hold E — Snatch phone";
     }
     this.prompt = p;
   }
@@ -1892,6 +2269,8 @@ export class GameEngine {
       toastKey: this.toastKey,
       winner: this.winner,
       caught: this.caught,
+      snatchProgress: clamp(this.snatchCharge / SNATCH_TIME, 0, 1),
+      snatchAlerts: this.snatchAlerts,
     });
   }
 
@@ -1919,6 +2298,8 @@ export class GameEngine {
       toastKey: this.toastKey,
       winner: this.winner,
       caught: this.caught,
+      snatchProgress: clamp(this.snatchCharge / SNATCH_TIME, 0, 1),
+      snatchAlerts: this.snatchAlerts,
     });
   }
 }

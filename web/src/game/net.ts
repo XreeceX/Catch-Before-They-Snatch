@@ -31,6 +31,7 @@ export interface NetPlayer {
   yaw: number;
   alive: boolean;
   isCop: boolean;
+  snatching: boolean;
 }
 
 export type ServerMessage =
@@ -189,8 +190,12 @@ export class NetClient {
     this.send({ t: "start" });
   }
 
-  snatch(): void {
-    this.send({ t: "snatch" });
+  snatchStart(): void {
+    this.send({ t: "snatchStart" });
+  }
+
+  snatchStop(): void {
+    this.send({ t: "snatchStop" });
   }
 
   apprehend(targetId: string | null): void {

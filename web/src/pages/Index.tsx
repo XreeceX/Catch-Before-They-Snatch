@@ -17,6 +17,7 @@ import {
   Globe,
   Bot,
   ArrowLeft,
+  ArrowUp,
   Crown,
   Plus,
   Loader2,
@@ -54,6 +55,8 @@ const INITIAL_HUD: HudState = {
   toastKey: 0,
   winner: null,
   caught: false,
+  snatchProgress: 0,
+  snatchAlerts: [],
 };
 
 const POWER_ICON: Record<PowerKind, typeof Zap> = {
@@ -185,6 +188,8 @@ const Practice = ({
   return (
     <>
       {hud.status === "playing" && <Crosshair />}
+      {hud.status === "playing" && <SnatchProgress progress={hud.snatchProgress} />}
+      {hud.status === "playing" && isCop && <SnatchAlerts bearings={hud.snatchAlerts} />}
       {hud.status === "playing" && <Toast text={hud.toast} k={hud.toastKey} />}
       {hud.status === "playing" && <InGameHud hud={hud} isCop={isCop} />}
       {hud.status === "reveal" && <RoleReveal hud={hud} isCop={isCop} onBegin={handleBegin} />}
@@ -313,6 +318,8 @@ const Online = ({
   return (
     <>
       {screen === "playing" && <Crosshair />}
+      {screen === "playing" && <SnatchProgress progress={hud.snatchProgress} />}
+      {screen === "playing" && isCop && <SnatchAlerts bearings={hud.snatchAlerts} />}
       {screen === "playing" && <Toast text={hud.toast} k={hud.toastKey} />}
       {screen === "playing" && <InGameHud hud={hud} isCop={isCop} />}
 
@@ -655,6 +662,69 @@ const LobbyScreen = ({
         </button>
       </div>
     </div>
+  );
+};
+
+/* ----------------------------- Snatch progress ----------------------------- */
+
+const SnatchProgress = ({ progress }: { progress: number }) => {
+  if (progress <= 0) return null;
+  const r = 26;
+  const circ = 2 * Math.PI * r;
+  const pct = Math.min(1, progress);
+  return (
+    <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2">
+      <svg width="72" height="72" viewBox="0 0 72 72" className="-rotate-90">
+        <circle cx="36" cy="36" r={r} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="5" />
+        <circle
+          cx="36"
+          cy="36"
+          r={r}
+          fill="none"
+          stroke="hsl(327 96% 60%)"
+          strokeWidth="5"
+          strokeLinecap="round"
+          strokeDasharray={circ}
+          strokeDashoffset={circ * (1 - pct)}
+          style={{ filter: "drop-shadow(0 0 6px hsl(327 96% 60% / 0.9))" }}
+        />
+      </svg>
+      <div className="absolute inset-0 grid place-items-center rotate-0">
+        <Smartphone size={22} className="text-primary" />
+      </div>
+    </div>
+  );
+};
+
+/* ----------------------------- Snatch alerts (cop) ----------------------------- */
+
+const SnatchAlerts = ({ bearings }: { bearings: number[] }) => {
+  if (bearings.length === 0) return null;
+  return (
+    <>
+      <div className="pointer-events-none absolute left-1/2 top-[24%] z-20 -translate-x-1/2">
+        <div className="animate-pulse rounded-full border border-destructive/60 bg-destructive/15 px-4 py-1.5 font-display text-xs font-extrabold uppercase tracking-widest text-destructive backdrop-blur">
+          Phone being snatched!
+        </div>
+      </div>
+      <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2">
+        {bearings.map((b, i) => (
+          <div
+            key={i}
+            className="absolute left-0 top-0"
+            style={{ transform: `translate(-50%, -50%) rotate(${b}rad)` }}
+          >
+            <div style={{ transform: "translateY(-78px)" }}>
+              <ArrowUp
+                size={34}
+                className="text-destructive"
+                style={{ filter: "drop-shadow(0 0 6px hsl(0 84% 60% / 0.9))" }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 };
 

@@ -22,6 +22,8 @@ interface ModelDef {
   idle: string;
   walk: string;
   run: string;
+  /** Optional one-shot snatch / pickpocket clip (pedestrian only). */
+  snatch?: string;
   /** Orientation metadata from generation. */
   localFrontAxis: AxisKey;
   localUpAxis: AxisKey;
@@ -41,6 +43,8 @@ const MODELS: Record<CharKind, ModelDef> = {
     walk: `${PED}-anim-casual-walk-inplace.glb`,
     // no dedicated run clip was generated — reuse the walk cycle.
     run: `${PED}-anim-casual-walk-inplace.glb`,
+    // Collect_Object clip, used as the phone-snatch animation.
+    snatch: `${PED}-anim-collect-object.glb`,
     localFrontAxis: "positiveZ",
     localUpAxis: "positiveY",
     height: 1.8,
@@ -106,17 +110,23 @@ function measure(object: THREE.Object3D): THREE.Box3 {
 
 interface Template {
   scene: THREE.Group;
-  clips: { idle: THREE.AnimationClip; walk: THREE.AnimationClip; run: THREE.AnimationClip };
+  clips: {
+    idle: THREE.AnimationClip;
+    walk: THREE.AnimationClip;
+    run: THREE.AnimationClip;
+    snatch: THREE.AnimationClip | null;
+  };
 }
 
-type Locomotion = "idle" | "walk" | "run";
+type AnimState = "idle" | "walk" | "run" | "snatch";
 
 /** A single animated character: add `root` to the person group, drive with update(). */
 export class CharacterInstance {
   readonly root = new THREE.Group();
   private mixer: THREE.AnimationMixer;
-  private actions: Record<Locomotion, THREE.AnimationAction>;
-  private state: Locomotion = "idle";
+  private actions: Partial<Record<AnimState, THREE.AnimationAction>>;
+  private state: AnimState = "idle";
+  private snatching = false;
 
   constructor(tpl: Template, def: ModelDef) {
     const clone = SkeletonUtils.clone(tpl.scene) as THREE.Group;
@@ -155,19 +165,33 @@ export class CharacterInstance {
       walk: this.mixer.clipAction(tpl.clips.walk),
       run: this.mixer.clipAction(tpl.clips.run),
     };
-    this.actions.idle.play();
+    if (tpl.clips.snatch) this.actions.snatch = this.mixer.clipAction(tpl.clips.snatch);
+    this.actions.idle!.play();
     // desync clips between instances so the crowd doesn't march in lockstep.
     this.mixer.setTime(Math.random() * 2);
   }
 
+  /** Toggle the looping snatch animation (visible to every player). */
+  setSnatch(active: boolean): void {
+    this.snatching = active && !!this.actions.snatch;
+  }
+
   /** Pick locomotion from ground speed (m/s) and advance the mixer. */
   update(dt: number, speed: number): void {
-    const next: Locomotion = speed > 5.5 ? "run" : speed > 0.4 ? "walk" : "idle";
+    const next: AnimState = this.snatching
+      ? "snatch"
+      : speed > 5.5
+        ? "run"
+        : speed > 0.4
+          ? "walk"
+          : "idle";
     if (next !== this.state) {
       const from = this.actions[this.state];
       const to = this.actions[next];
-      to.reset().play();
-      from.crossFadeTo(to, 0.22, false);
+      if (to) {
+        to.reset().play();
+        if (from) from.crossFadeTo(to, 0.18, false);
+      }
       this.state = next;
     }
     this.mixer.update(dt);
@@ -219,9 +243,19 @@ export class CharacterModels {
         walkClip.name = "walk";
         const runClip = run.animations[0].clone();
         runClip.name = "run";
+        let snatchClip: THREE.AnimationClip | null = null;
+        if (def.snatch) {
+          try {
+            const snatch = await this.loader.loadAsync(def.snatch);
+            snatchClip = snatch.animations[0].clone();
+            snatchClip.name = "snatch";
+          } catch (err) {
+            console.warn(`snatch clip failed for ${kind}`, err);
+          }
+        }
         this.templates.set(kind, {
           scene: rig.scene,
-          clips: { idle: idleClip, walk: walkClip, run: runClip },
+          clips: { idle: idleClip, walk: walkClip, run: runClip, snatch: snatchClip },
         });
       }),
     );

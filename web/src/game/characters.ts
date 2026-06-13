@@ -145,6 +145,8 @@ export class CharacterInstance {
   private actions: Partial<Record<AnimState, THREE.AnimationAction>>;
   private state: AnimState = "idle";
   private snatching = false;
+  private resisting = false;
+  private resistT = 0;
 
   constructor(tpl: Template, def: ModelDef) {
     const clone = SkeletonUtils.clone(tpl.scene) as THREE.Group;
@@ -194,15 +196,36 @@ export class CharacterInstance {
     this.snatching = active && !!this.actions.snatch;
   }
 
+  /** Toggle the "victim resists" state: feet planted, body twisting/flinching
+   *  back as if struggling against a snatcher. Visible to every player. */
+  setResist(active: boolean): void {
+    if (this.resisting === active) return;
+    this.resisting = active;
+    if (!active) {
+      this.resistT = 0;
+      this.root.rotation.set(0, 0, 0);
+    }
+  }
+
   /** Pick locomotion from ground speed (m/s) and advance the mixer. */
   update(dt: number, speed: number): void {
-    const next: AnimState = this.snatching
-      ? "snatch"
-      : speed > 5.5
-        ? "run"
-        : speed > 0.4
-          ? "walk"
-          : "idle";
+    let locomotion = speed;
+    if (this.resisting) {
+      // Plant the feet (idle legs) and shake the upper body as a struggle.
+      this.resistT += dt;
+      this.root.rotation.z = Math.sin(this.resistT * 22) * 0.16;
+      this.root.rotation.x = -0.12 + Math.sin(this.resistT * 11) * 0.06;
+      locomotion = 0;
+    }
+    const next: AnimState = this.resisting
+      ? "idle"
+      : this.snatching
+        ? "snatch"
+        : locomotion > 5.5
+          ? "run"
+          : locomotion > 0.4
+            ? "walk"
+            : "idle";
     if (next !== this.state) {
       const from = this.actions[this.state];
       const to = this.actions[next];

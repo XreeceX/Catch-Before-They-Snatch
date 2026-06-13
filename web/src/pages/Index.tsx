@@ -24,6 +24,8 @@ import {
   WifiOff,
   Copy,
   Check,
+  Pause,
+  LogOut,
 } from "lucide-react";
 
 import { GameEngine, type HudState, type PowerKind, type Role } from "@/game/engine";
@@ -57,6 +59,7 @@ const INITIAL_HUD: HudState = {
   caught: false,
   snatchProgress: 0,
   snatchAlerts: [],
+  paused: false,
 };
 
 const POWER_ICON: Record<PowerKind, typeof Zap> = {
@@ -192,6 +195,12 @@ const Practice = ({
       {hud.status === "playing" && isCop && <SnatchAlerts bearings={hud.snatchAlerts} />}
       {hud.status === "playing" && <Toast text={hud.toast} k={hud.toastKey} />}
       {hud.status === "playing" && <InGameHud hud={hud} isCop={isCop} />}
+      {hud.status === "playing" && hud.paused && (
+        <PauseMenu
+          onResume={() => engineRef.current?.resume()}
+          onExit={handleHome}
+        />
+      )}
       {hud.status === "reveal" && <RoleReveal hud={hud} isCop={isCop} onBegin={handleBegin} />}
       {hud.status === "gameover" && (
         <Results hud={hud} isCop={isCop} onAgain={handleAgain} onHome={handleHome} hostControls />
@@ -322,6 +331,9 @@ const Online = ({
       {screen === "playing" && isCop && <SnatchAlerts bearings={hud.snatchAlerts} />}
       {screen === "playing" && <Toast text={hud.toast} k={hud.toastKey} />}
       {screen === "playing" && <InGameHud hud={hud} isCop={isCop} />}
+      {screen === "playing" && hud.paused && (
+        <PauseMenu onResume={() => engineRef.current?.resume()} onExit={leave} exitLabel="Leave Match" />
+      )}
 
       {screen === "browser" && (
         <Browser name={name} setName={setName} onJoin={join} onBack={onExit} />
@@ -366,6 +378,60 @@ const ConnBanner = ({ conn }: { conn: ConnState }) => (
       <span className="font-display text-[11px] font-bold uppercase tracking-wider text-foreground">
         {conn === "connecting" ? "Connecting…" : "Reconnecting…"}
       </span>
+    </div>
+  </div>
+);
+
+/* ----------------------------- Pause menu ----------------------------- */
+
+const PauseMenu = ({
+  onResume,
+  onExit,
+  exitLabel = "Exit to Menu",
+}: {
+  onResume: () => void;
+  onExit: () => void;
+  exitLabel?: string;
+}) => (
+  <div className="absolute inset-0 z-40 flex items-center justify-center px-6">
+    <div
+      className="absolute inset-0 bg-background/70 backdrop-blur-md"
+      style={{ background: "radial-gradient(120% 90% at 50% 40%, rgba(8,11,20,0.55), rgba(3,5,11,0.88))" }}
+    />
+    <div className="animate-pop-in pointer-events-auto relative w-full max-w-xs rounded-3xl border border-white/12 bg-card/80 p-7 text-center shadow-2xl backdrop-blur-xl">
+      <div
+        className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-secondary/15 text-secondary"
+        style={{ boxShadow: "0 0 26px hsl(186 92% 55% / 0.35)" }}
+      >
+        <Pause size={26} />
+      </div>
+      <h2 className="mt-4 font-display text-3xl font-extrabold uppercase tracking-tight text-foreground">
+        Paused
+      </h2>
+      <p className="mt-1 text-xs uppercase tracking-[0.3em] text-muted-foreground">
+        Streets of London
+      </p>
+
+      <div className="mt-7 flex flex-col gap-3">
+        <button
+          onClick={onResume}
+          className="group inline-flex items-center justify-center gap-2 rounded-full bg-primary px-8 py-4 font-display text-lg font-extrabold uppercase tracking-wider text-primary-foreground transition-transform duration-150 hover:scale-105 active:scale-95"
+          style={{ boxShadow: "0 0 30px hsl(327 96% 60% / 0.55)" }}
+        >
+          <Play size={20} />
+          Continue
+        </button>
+        <button
+          onClick={onExit}
+          className="inline-flex items-center justify-center gap-2 rounded-full border border-white/12 bg-white/5 px-8 py-3.5 font-display text-base font-bold uppercase tracking-wider text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+        >
+          <LogOut size={18} />
+          {exitLabel}
+        </button>
+      </div>
+      <p className="mt-5 text-[11px] text-muted-foreground">
+        Press <span className="font-bold text-foreground">Esc</span> to pause anytime
+      </p>
     </div>
   </div>
 );

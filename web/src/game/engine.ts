@@ -55,6 +55,8 @@ export interface HudState {
   snatchProgress: number;
   /** Bearings (radians, 0 = ahead, + = right) to active snatches — cop only. */
   snatchAlerts: number[];
+  /** True while the round is paused and the pause menu is shown. */
+  paused: boolean;
 }
 
 const POWER_META: Record<PowerKind, PowerMeta> = {
@@ -324,6 +326,7 @@ export class GameEngine {
   private yaw = 0;
   private pitch = 0;
   private pointerLocked = false;
+  private paused = false;
   private interactQueued = false;
   private powerQueued = false;
 
@@ -648,9 +651,11 @@ export class GameEngine {
         const dims = this.propModels.dims("bridge");
         // Rotate so the longest (deck) axis runs along z (the crossing).
         if (dims.z < dims.x) model.rotation.y = Math.PI / 2;
-        // Sink so the deck roughly meets the flat walking slab; arches dip into
-        // the water, railings rise above.
-        model.position.set(0, -dims.y * 0.5, centerZ);
+        // Sink the structure so only the side railings (~1.5m) rise above the
+        // flat walking slab; the arches/deck dip below, so the player walks on
+        // top of the bridge instead of appearing buried inside it.
+        const railTop = 1.5;
+        model.position.set(0, railTop - dims.y, centerZ);
         this.streetGroup.add(model);
         return;
       }
@@ -1163,7 +1168,20 @@ export class GameEngine {
 
   private onPointerLockChange = (): void => {
     this.pointerLocked = document.pointerLockElement === this.canvas;
+    // Losing the pointer lock mid-round (e.g. pressing ESC) opens the pause menu.
+    if (!this.pointerLocked && this.status === "playing" && !this.paused) {
+      this.paused = true;
+      this.pushHud();
+    }
   };
+
+  /** Resume a paused round and re-capture the pointer (called from a click). */
+  resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    this.canvas?.requestPointerLock();
+    this.pushHud();
+  }
 
   private onMouseMove = (e: MouseEvent): void => {
     if (!this.pointerLocked) return;
@@ -1248,12 +1266,14 @@ export class GameEngine {
 
   beginRound(): void {
     this.status = "playing";
+    this.paused = false;
     this.canvas?.requestPointerLock();
     this.pushHud();
   }
 
   toLobby(): void {
     this.status = "lobby";
+    this.paused = false;
     document.exitPointerLock?.();
     this.pushHud();
   }
@@ -1277,6 +1297,7 @@ export class GameEngine {
   private endGame(winner: Winner): void {
     this.winner = winner;
     this.status = "gameover";
+    this.paused = false;
     document.exitPointerLock?.();
     this.pushHud();
   }
@@ -1295,7 +1316,7 @@ export class GameEngine {
   private loop = (): void => {
     this.raf = requestAnimationFrame(this.loop);
     const dt = Math.min(this.clock.getDelta(), 0.05);
-    if (this.status === "playing") {
+    if (this.status === "playing" && !this.paused) {
       if (this.online) this.updateOnline(dt);
       else this.update(dt);
     }
@@ -2023,6 +2044,7 @@ export class GameEngine {
 
   beginOnlineRound(): void {
     this.status = "playing";
+    this.paused = false;
     this.playerPos.set(0, EYE, 30);
     this.playerVel.set(0, 0, 0);
     this.yaw = Math.PI;
@@ -2033,6 +2055,7 @@ export class GameEngine {
 
   endOnlineMatch(): void {
     this.status = "gameover";
+    this.paused = false;
     document.exitPointerLock?.();
     this.pushHud();
   }
@@ -2558,6 +2581,7 @@ export class GameEngine {
       caught: this.caught,
       snatchProgress: clamp(this.snatchCharge / SNATCH_TIME, 0, 1),
       snatchAlerts: this.snatchAlerts,
+      paused: this.paused,
     });
   }
 
@@ -2587,6 +2611,7 @@ export class GameEngine {
       caught: this.caught,
       snatchProgress: clamp(this.snatchCharge / SNATCH_TIME, 0, 1),
       snatchAlerts: this.snatchAlerts,
+      paused: this.paused,
     });
   }
 }

@@ -129,6 +129,17 @@ function rand(a: number, b: number): number {
   return a + Math.random() * (b - a);
 }
 
+/** Deterministic PRNG (mulberry32) so every client builds the same crowd. */
+function mulberry32(seed: number): () => number {
+  let s = seed >>> 0;
+  return (): number => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
@@ -136,6 +147,17 @@ function clamp(v: number, lo: number, hi: number): number {
 /* ----------------------------- Agent ----------------------------- */
 
 type AgentType = "civilian" | "snatcher" | "cop";
+
+interface CrowdPath {
+  hx: number;
+  hz: number;
+  rx: number;
+  rz: number;
+  sx: number;
+  sz: number;
+  px: number;
+  pz: number;
+}
 
 interface Agent {
   group: THREE.Group;
@@ -155,6 +177,8 @@ interface Agent {
   snatchTarget: Agent | null;
   /** Civilian victim: someone is mid-snatch on them this frame → stand and resist. */
   beingSnatched: boolean;
+  /** Deterministic looping route for online crowd (shared across clients). */
+  path: CrowdPath | null;
 }
 
 /** Visual registry entry: tracks a spawned person's animated Meshy model. */
@@ -164,6 +188,8 @@ interface Person {
   kind: CharKind;
   char: CharacterInstance | null;
   prev: THREE.Vector3;
+  /** Deterministic civilian look index (online crowd) — undefined = random. */
+  variant?: number;
 }
 
 interface Powerup {
@@ -385,6 +411,7 @@ export class GameEngine {
   private myId = "";
   private remote = new Map<string, RemoteAvatar>();
   private crowd: Agent[] = [];
+  private crowdSeed = 1;
   private netCrates = new Map<string, THREE.Group>();
   private netTraps = new Map<string, THREE.Group>();
   private netDecoys = new Map<string, THREE.Object3D>();
@@ -408,6 +435,16 @@ export class GameEngine {
   private playerSnatchTarget: Agent | null = null; // civilian the local player is snatching
   private snatchAlerts: number[] = []; // bearings to active snatches (cop HUD)
   private snatchBeacons: THREE.Mesh[] = []; // reusable 3D markers above active snatches
+
+  /** Combined asset-load progress (0..1) across characters + props. */
+  get assetProgress(): number {
+    return (this.charModels.progress + this.propModels.progress) / 2;
+  }
+
+  /** True once every generated character + prop model has finished loading. */
+  get assetsReady(): boolean {
+    return this.charModels.ready && this.propModels.ready;
+  }
 
   constructor(canvas: HTMLCanvasElement, setHud: (s: HudState) => void) {
     this.setHud = setHud;
@@ -960,7 +997,7 @@ export class GameEngine {
 
   /* --------------------------- agents --------------------------- */
 
-  private makePerson(type: AgentType): Agent {
+  private makePerson(type: AgentType, opts?: { variant?: number; pos?: THREE.Vector3 }): Agent {
     const g = new THREE.Group();
     const body = new THREE.Group();
     g.add(body);
@@ -1038,10 +1075,11 @@ export class GameEngine {
       snatchT: 0,
       snatchTarget: null,
       beingSnatched: false,
+      path: null,
     };
-    g.position.copy(this.randomPoint());
+    g.position.copy(opts?.pos ?? this.randomPoint());
     this.scene.add(g);
-    this.registerPerson(g, body, kindFor(type));
+    this.registerPerson(g, body, kindFor(type), opts?.variant);
     return a;
   }
 
@@ -1083,14 +1121,14 @@ export class GameEngine {
   }
 
   /** Track a person for animated-model upgrade + per-frame locomotion. */
-  private registerPerson(group: THREE.Group, body: THREE.Group, kind: CharKind): void {
-    const person: Person = { group, body, kind, char: null, prev: group.position.clone() };
+  private registerPerson(group: THREE.Group, body: THREE.Group, kind: CharKind, variant?: number): void {
+    const person: Person = { group, body, kind, char: null, prev: group.position.clone(), variant };
     if (this.charModels.ready) this.attachChar(person);
     this.people.push(person);
   }
 
   private attachChar(person: Person): void {
-    const char = this.charModels.create(person.kind);
+    const char = this.charModels.create(person.kind, person.variant);
     if (!char) return;
     person.char = char;
     person.body.visible = false; // hide procedural placeholder
@@ -1665,6 +1703,26 @@ export class GameEngine {
     }
   }
 
+  /** Place an online crowd civilian on its deterministic looping route for the
+   *  shared wall-clock time `clock` (seconds). All clients compute the same
+   *  position, so the cop and snatcher agree on who is being robbed. */
+  private steerCrowd(a: Agent, clock: number): void {
+    const p = a.path;
+    if (!p) {
+      this.wanderAgent(a, 0.016);
+      return;
+    }
+    const nx = p.hx + p.rx * Math.sin(clock * p.sx + p.px);
+    const nz = p.hz + p.rz * Math.sin(clock * p.sz + p.pz);
+    const res = this.collide(nx, nz);
+    a.group.position.x = res.x;
+    a.group.position.z = res.z;
+    // face the direction of travel (rigs face +Z → atan2(vx, vz) is correct).
+    const vx = p.rx * p.sx * Math.cos(clock * p.sx + p.px);
+    const vz = p.rz * p.sz * Math.cos(clock * p.sz + p.pz);
+    if (vx * vx + vz * vz > 1e-6) a.group.rotation.y = Math.atan2(vx, vz);
+  }
+
   private updatePowerups(dt: number): void {
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0 && this.powerups.length < 3) {
@@ -1994,11 +2052,12 @@ export class GameEngine {
   /* --------------------------- online --------------------------- */
 
   /** Enter networked mode: drop AI, build a cosmetic crowd, wait in lobby. */
-  enterOnline(net: NetSender, myId: string): void {
+  enterOnline(net: NetSender, myId: string, crowdSeed?: number): void {
     this.online = true;
     this.net = net;
     this.myId = myId;
     this.role = "snatcher";
+    if (crowdSeed !== undefined && crowdSeed > 0) this.crowdSeed = crowdSeed;
 
     for (const a of this.agents) this.scene.remove(a.group);
     this.agents = [];
@@ -2086,10 +2145,36 @@ export class GameEngine {
     }
   }
 
+  /** Build the cosmetic civilian crowd deterministically from the shared seed so
+   *  every client sees the SAME people, in the same spots, with the same looks.
+   *  Each civilian follows a slow looping route driven by a shared wall clock,
+   *  keeping all clients in agreement without per-frame network sync. */
   private buildCrowd(): void {
     for (const a of this.crowd) this.scene.remove(a.group);
     this.crowd = [];
-    for (let i = 0; i < 18; i++) this.crowd.push(this.makePerson("civilian"));
+    const rng = mulberry32(this.crowdSeed);
+    for (let i = 0; i < 18; i++) {
+      // home anchored on the walkable street, clear of the pavements/buildings.
+      const hx = (rng() * 2 - 1) * (HALF_X - 12);
+      const hz = -HALF_Z + 8 + rng() * (RIVER_NEAR - HALF_Z * 0.2 - 8);
+      const path: CrowdPath = {
+        hx,
+        hz,
+        rx: 3 + rng() * 5,
+        rz: 3 + rng() * 5,
+        sx: 0.18 + rng() * 0.22,
+        sz: 0.18 + rng() * 0.22,
+        px: rng() * Math.PI * 2,
+        pz: rng() * Math.PI * 2,
+      };
+      const variant = Math.floor(rng() * 997);
+      const person = this.makePerson("civilian", {
+        variant,
+        pos: new THREE.Vector3(hx, 0, hz),
+      });
+      person.path = path;
+      this.crowd.push(person);
+    }
   }
 
   /* --- inbound server messages --- */
@@ -2288,7 +2373,10 @@ export class GameEngine {
       r.group.position.x += (r.tx - r.group.position.x) * Math.min(1, dt * 12);
       r.group.position.z += (r.tz - r.group.position.z) * Math.min(1, dt * 12);
       r.group.position.y = Math.abs(Math.sin(t + r.group.id)) * 0.06;
-      const dy = ((r.tyaw - r.group.rotation.y + Math.PI) % (Math.PI * 2)) - Math.PI;
+      // The character rigs face +Z, but the player's look/forward vector points to
+      // -Z at yaw 0, so the avatar must face yaw + π to walk forward (not moonwalk).
+      const targetYaw = r.tyaw + Math.PI;
+      const dy = ((targetYaw - r.group.rotation.y + Math.PI) % (Math.PI * 2)) - Math.PI;
       r.group.rotation.y += dy * Math.min(1, dt * 10);
     }
 
@@ -2316,13 +2404,15 @@ export class GameEngine {
       }
     }
 
-    // cosmetic crowd wander (victims stand still and resist)
+    // cosmetic crowd: deterministic looping route on a shared clock so every
+    // client agrees on each civilian's position (victims freeze and resist).
+    const clock = Date.now() * 0.001;
     for (const a of this.crowd) {
       if (a.beingSnatched) {
         this.setResistAnim(a.group, true);
       } else {
         this.setResistAnim(a.group, false);
-        this.wanderAgent(a, dt);
+        this.steerCrowd(a, clock);
       }
       a.group.position.y = Math.abs(Math.sin(t + a.group.id)) * 0.06;
     }

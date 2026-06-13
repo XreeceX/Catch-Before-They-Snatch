@@ -113,9 +113,17 @@ export class PropModels {
   private loader = new GLTFLoader();
   private templates = new Map<PropKind, PropTemplate>();
   private loaded = false;
+  private filesLoaded = 0;
+  private filesTotal = 0;
 
   get ready(): boolean {
-    return this.loaded;
+    return this.loaded || !this.enabled;
+  }
+
+  /** Load progress 0..1 across every prop GLB. */
+  get progress(): number {
+    if (!this.enabled || this.loaded) return 1;
+    return this.filesTotal > 0 ? Math.min(1, this.filesLoaded / this.filesTotal) : 0;
   }
 
   /** True only when at least one real generated URL has been wired in. */
@@ -125,18 +133,20 @@ export class PropModels {
 
   async load(): Promise<void> {
     if (!this.enabled || this.loaded) return;
+    const kinds = (Object.keys(PROPS) as PropKind[]).filter((kind) => !pending(PROPS[kind].url));
+    this.filesTotal = kinds.length;
     await Promise.all(
-      (Object.keys(PROPS) as PropKind[])
-        .filter((kind) => !pending(PROPS[kind].url))
-        .map(async (kind) => {
-          const def = PROPS[kind];
-          try {
-            const gltf = await this.loader.loadAsync(def.url);
-            this.templates.set(kind, this.normalise(gltf.scene, def));
-          } catch (err) {
-            console.warn(`prop ${kind} failed to load`, err);
-          }
-        }),
+      kinds.map(async (kind) => {
+        const def = PROPS[kind];
+        try {
+          const gltf = await this.loader.loadAsync(def.url);
+          this.templates.set(kind, this.normalise(gltf.scene, def));
+        } catch (err) {
+          console.warn(`prop ${kind} failed to load`, err);
+        } finally {
+          this.filesLoaded += 1;
+        }
+      }),
     );
     this.loaded = true;
   }

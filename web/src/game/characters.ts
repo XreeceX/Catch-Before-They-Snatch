@@ -297,9 +297,17 @@ export class CharacterModels {
   private police: LoadedModel | null = null;
   private pedestrians: LoadedModel[] = [];
   private loaded = false;
+  private filesLoaded = 0;
+  private filesTotal = 0;
 
   get ready(): boolean {
-    return this.loaded;
+    return this.loaded || !this.enabled;
+  }
+
+  /** Load progress 0..1 across every character GLB file. */
+  get progress(): number {
+    if (!this.enabled || this.loaded) return 1;
+    return this.filesTotal > 0 ? Math.min(1, this.filesLoaded / this.filesTotal) : 0;
   }
 
   /** True only when at least one real generated character URL is wired in. */
@@ -307,13 +315,21 @@ export class CharacterModels {
     return !pending(POLICE.rigged) || PEDESTRIAN_VARIANTS.some((d) => !pending(d.rigged));
   }
 
+  /** Count each GLB toward the load progress as it resolves. */
+  private track<T>(p: Promise<T>): Promise<T> {
+    return p.then((r) => {
+      this.filesLoaded += 1;
+      return r;
+    });
+  }
+
   private async loadModel(def: ModelDef): Promise<LoadedModel | null> {
     try {
       const [rig, idle, walk, run] = await Promise.all([
-        this.loader.loadAsync(def.rigged),
-        this.loader.loadAsync(def.idle),
-        this.loader.loadAsync(def.walk),
-        this.loader.loadAsync(def.run),
+        this.track(this.loader.loadAsync(def.rigged)),
+        this.track(this.loader.loadAsync(def.idle)),
+        this.track(this.loader.loadAsync(def.walk)),
+        this.track(this.loader.loadAsync(def.run)),
       ]);
       const idleClip = idle.animations[0].clone();
       idleClip.name = "idle";
@@ -324,7 +340,7 @@ export class CharacterModels {
       let snatchClip: THREE.AnimationClip | null = null;
       if (def.snatch) {
         try {
-          const snatch = await this.loader.loadAsync(def.snatch);
+          const snatch = await this.track(this.loader.loadAsync(def.snatch));
           snatchClip = snatch.animations[0].clone();
           snatchClip.name = "snatch";
         } catch (err) {
@@ -347,6 +363,9 @@ export class CharacterModels {
   async load(): Promise<void> {
     if (!this.enabled || this.loaded) return;
     const pedDefs = PEDESTRIAN_VARIANTS.filter((d) => !pending(d.rigged));
+    this.filesTotal =
+      (pending(POLICE.rigged) ? 0 : 4) +
+      pedDefs.reduce((sum, d) => sum + 4 + (d.snatch ? 1 : 0), 0);
     const [police, ...peds] = await Promise.all([
       pending(POLICE.rigged) ? Promise.resolve(null) : this.loadModel(POLICE),
       ...pedDefs.map((d) => this.loadModel(d)),
@@ -356,12 +375,18 @@ export class CharacterModels {
     this.loaded = true;
   }
 
-  create(kind: CharKind): CharacterInstance | null {
+  /** Create an animated instance. Pass a deterministic `variant` index to pick a
+   *  specific civilian look so every client renders the same crowd. */
+  create(kind: CharKind, variant?: number): CharacterInstance | null {
     if (kind === "police") {
       return this.police ? new CharacterInstance(this.police.tpl, this.police.def) : null;
     }
     if (this.pedestrians.length === 0) return null;
-    const m = this.pedestrians[Math.floor(Math.random() * this.pedestrians.length)];
+    const idx =
+      variant !== undefined
+        ? ((variant % this.pedestrians.length) + this.pedestrians.length) % this.pedestrians.length
+        : Math.floor(Math.random() * this.pedestrians.length);
+    const m = this.pedestrians[idx];
     return new CharacterInstance(m.tpl, m.def);
   }
 }

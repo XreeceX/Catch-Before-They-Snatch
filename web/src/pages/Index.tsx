@@ -85,6 +85,8 @@ const Index = () => {
   const engineRef = useRef<GameEngine | null>(null);
   const [hud, setHud] = useState<HudState>(INITIAL_HUD);
   const [mode, setMode] = useState<AppMode>("menu");
+  const [loadProgress, setLoadProgress] = useState(0);
+  const [assetsReady, setAssetsReady] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -94,8 +96,22 @@ const Index = () => {
     engine.start();
     const onResize = (): void => engine.resize();
     window.addEventListener("resize", onResize);
+
+    // Poll asset-load progress and only reveal the menu once everything is ready.
+    const poll = window.setInterval(() => {
+      const e = engineRef.current;
+      if (!e) return;
+      setLoadProgress(e.assetProgress);
+      if (e.assetsReady) {
+        setLoadProgress(1);
+        setAssetsReady(true);
+        window.clearInterval(poll);
+      }
+    }, 120);
+
     return () => {
       window.removeEventListener("resize", onResize);
+      window.clearInterval(poll);
       engine.stop();
       engineRef.current = null;
     };
@@ -112,15 +128,55 @@ const Index = () => {
         }}
       />
 
-      {mode === "menu" && (
+      {!assetsReady && <LoadingScreen progress={loadProgress} />}
+      {assetsReady && mode === "menu" && (
         <MainMenu onPractice={() => setMode("practice")} onOnline={() => setMode("online")} />
       )}
-      {mode === "practice" && (
+      {assetsReady && mode === "practice" && (
         <Practice hud={hud} engineRef={engineRef} onExit={() => setMode("menu")} />
       )}
-      {mode === "online" && (
+      {assetsReady && mode === "online" && (
         <Online hud={hud} engineRef={engineRef} onExit={() => setMode("menu")} />
       )}
+    </div>
+  );
+};
+
+/* ----------------------------- Loading screen ----------------------------- */
+
+const LoadingScreen = ({ progress }: { progress: number }) => {
+  const pct = Math.round(Math.min(1, Math.max(0, progress)) * 100);
+  return (
+    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-background/95 px-8 text-center backdrop-blur-sm">
+      <div className="animate-pop-in w-full max-w-sm">
+        <p className="font-display text-xs uppercase tracking-[0.4em] text-secondary text-glow-cyan">
+          Streets of London
+        </p>
+        <h1 className="mt-3 font-display text-5xl font-extrabold uppercase leading-[0.85] tracking-tight">
+          <span className="block text-foreground text-glow-pink">Phone</span>
+          <span className="block text-secondary text-glow-cyan">Snatcher</span>
+        </h1>
+
+        <div className="mt-10 flex items-center justify-center gap-2 text-muted-foreground">
+          <Loader2 size={16} className="animate-spin text-primary" />
+          <span className="font-display text-[11px] font-bold uppercase tracking-widest">
+            Loading the city…
+          </span>
+        </div>
+
+        <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full border border-white/12 bg-card/70">
+          <div
+            className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
+            style={{
+              width: `${pct}%`,
+              boxShadow: "0 0 16px hsl(327 96% 60% / 0.8)",
+            }}
+          />
+        </div>
+        <p className="mt-2 font-display text-sm font-extrabold tabular-nums text-foreground">
+          {pct}%
+        </p>
+      </div>
     </div>
   );
 };
@@ -247,7 +303,7 @@ const Online = ({
       switch (msg.t) {
         case "welcome":
           myIdRef.current = msg.you;
-          if (netRef.current) engine.enterOnline(netRef.current, msg.you);
+          if (netRef.current) engine.enterOnline(netRef.current, msg.you, msg.crowdSeed);
           break;
         case "lobby":
           setLobby({ players: msg.players, hostId: msg.hostId });

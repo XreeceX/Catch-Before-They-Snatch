@@ -49,9 +49,9 @@ function pedDef(base: string, height: number): ModelDef {
     run: `${base}-anim-casual-walk-inplace.glb`,
     // Collect_Object clip, used as the phone-snatch animation.
     snatch: `${base}-anim-collect-object.glb`,
-    // Meshy rigs face -Z; correcting to this makes them walk facing forward
-    // (rather than moonwalking backwards) and face victims while snatching.
-    localFrontAxis: "negativeZ",
+    // These rigs face +Z (per generation metadata). Orienting to that makes
+    // them walk facing forward and face victims while snatching.
+    localFrontAxis: "positiveZ",
     localUpAxis: "positiveY",
     height,
   };
@@ -70,7 +70,7 @@ const POLICE: ModelDef = {
   idle: `${COP}-anim-idle.glb`,
   walk: `${COP}-anim-casual-walk-inplace.glb`,
   run: `${COP}-anim-casual-walk-inplace.glb`,
-  localFrontAxis: "negativeZ",
+  localFrontAxis: "positiveZ",
   localUpAxis: "positiveY",
   height: 1.85,
 };

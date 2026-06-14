@@ -463,8 +463,8 @@ export class GameEngine {
     this.renderer.toneMappingExposure = 1.05;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x9fb0c3);
-    this.scene.fog = new THREE.Fog(0x9fb0c3, 90, 230);
+    this.scene.background = new THREE.Color(0xc9d8e6);
+    this.scene.fog = new THREE.Fog(0xc9d8e6, 110, 300);
 
     this.camera = new THREE.PerspectiveCamera(72, 1, 0.1, 600);
     this.camera.position.copy(this.playerPos);
@@ -513,23 +513,48 @@ export class GameEngine {
     this.scene.add(this.streetGroup);
     this.buildStreet();
 
-    // sky dome gradient via large sphere
+    // sky dome gradient via large sphere — rendered without fog so the gradient
+    // and sun stay vivid instead of washing out to a flat haze colour.
     const sky = new THREE.Mesh(
-      new THREE.SphereGeometry(320, 24, 16),
-      new THREE.MeshBasicMaterial({ side: THREE.BackSide, vertexColors: true })
+      new THREE.SphereGeometry(440, 32, 20),
+      new THREE.MeshBasicMaterial({ side: THREE.BackSide, vertexColors: true, fog: false })
     );
     const geo = sky.geometry as THREE.SphereGeometry;
     const colors: number[] = [];
-    const top = new THREE.Color(0x3b6ea5);
-    const bot = new THREE.Color(0xcdd9e3);
+    const zenith = new THREE.Color(0x2f6cb0);
+    const mid = new THREE.Color(0x8fb8e0);
+    const horizon = new THREE.Color(0xdfe9f0);
     const pos = geo.attributes.position;
     for (let i = 0; i < pos.count; i++) {
-      const y = pos.getY(i) / 320;
-      const col = bot.clone().lerp(top, clamp(y * 0.5 + 0.5, 0, 1));
+      const y = clamp(pos.getY(i) / 440, -1, 1);
+      // two-stop gradient: horizon haze -> mid sky -> deep zenith blue
+      const t = clamp(y, 0, 1);
+      const col = t < 0.35
+        ? horizon.clone().lerp(mid, t / 0.35)
+        : mid.clone().lerp(zenith, (t - 0.35) / 0.65);
       colors.push(col.r, col.g, col.b);
     }
     geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
     this.scene.add(sky);
+
+    // Sun — glowing disc placed along the directional light's direction, with a
+    // soft additive halo so it reads as a real sun in the sky.
+    const sunDir = new THREE.Vector3(70, 110, 60).normalize();
+    const sunGroup = new THREE.Group();
+    const disc = new THREE.Mesh(
+      new THREE.SphereGeometry(16, 24, 24),
+      new THREE.MeshBasicMaterial({ color: 0xfff6e0, fog: false })
+    );
+    sunGroup.add(disc);
+    for (const [r, opacity, color] of [[34, 0.5, 0xfff1cf], [62, 0.28, 0xffe6b0], [110, 0.14, 0xffdca0]] as const) {
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(r, 24, 24),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.BackSide })
+      );
+      sunGroup.add(halo);
+    }
+    sunGroup.position.copy(sunDir.multiplyScalar(400));
+    this.scene.add(sunGroup);
   }
 
   /** Build (or rebuild) the whole street set. Uses generated prop models
@@ -549,8 +574,54 @@ export class GameEngine {
     this.buildBuildings();
     this.buildLamps();
     this.buildPhoneBoxes();
+    this.buildTunnels();
     this.buildThames();
     this.rebuildBuses();
+  }
+
+  /** Stone portal tunnels at both ends of the street that buses drive in and
+   *  out of, so traffic no longer pops out of thin air at the map edge. The
+   *  side pillars hug the building line and the arch sits high overhead, so the
+   *  central road — and the bridge crossing — stay fully open underneath. */
+  private buildTunnels(): void {
+    const W = HALF_X - 0.6;
+    const stone = new THREE.MeshStandardMaterial({ color: 0x70757b, roughness: 0.95 });
+    const trim = new THREE.MeshStandardMaterial({ color: 0x595d63, roughness: 0.95 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x07090d, roughness: 1 });
+    const throat = 18;
+    for (const end of [-1, 1] as const) {
+      const g = new THREE.Group();
+      // side pillars hugging the pavements
+      for (const side of [-1, 1]) {
+        const pillar = new THREE.Mesh(new THREE.BoxGeometry(6, 13, 8), stone);
+        pillar.position.set(side * (W - 2), 6.5, 0);
+        pillar.castShadow = true;
+        pillar.receiveShadow = true;
+        g.add(pillar);
+      }
+      // overhead lintel spanning the road, clearing the buses below
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(W * 2 + 4, 4, 9), stone);
+      lintel.position.set(0, 12.5, 0);
+      lintel.castShadow = true;
+      g.add(lintel);
+      // decorative cornice band under the lintel
+      const band = new THREE.Mesh(new THREE.BoxGeometry(W * 2 + 2, 1, 9.6), trim);
+      band.position.set(0, 10.2, 0);
+      g.add(band);
+      // dark recessed throat (ceiling + side walls) extending away from the
+      // play area so buses sit hidden in shadow before they emerge.
+      const cz = end * (throat / 2 + 2);
+      const ceiling = new THREE.Mesh(new THREE.BoxGeometry(W * 2, 0.8, throat), dark);
+      ceiling.position.set(0, 9.4, cz);
+      g.add(ceiling);
+      for (const side of [-1, 1]) {
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(1, 10, throat), dark);
+        wall.position.set(side * W, 5, cz);
+        g.add(wall);
+      }
+      g.position.z = end === -1 ? -HALF_Z + 1 : HALF_Z - 1;
+      this.streetGroup.add(g);
+    }
   }
 
   /** Scatter classic red telephone boxes along both pavements. */
@@ -776,7 +847,8 @@ export class GameEngine {
     const lanes = [-HALF_X * 0.45, HALF_X * 0.2, -HALF_X * 0.1];
     for (let i = 0; i < 3; i++) {
       const bus = this.makeBus();
-      bus.position.set(lanes[i], 0, -HALF_Z + i * 28);
+      // stagger start positions so a bus is always emerging from the south tunnel
+      bus.position.set(lanes[i], 0, -HALF_Z - 10 + i * 30);
       this.buses.push(bus);
       this.scene.add(bus);
     }
@@ -1860,7 +1932,9 @@ export class GameEngine {
   private updateBuses(dt: number): void {
     for (const bus of this.buses) {
       bus.position.z += dt * 5;
-      if (bus.position.z > HALF_Z - 2) bus.position.z = -HALF_Z - 6;
+      // recycle once the bus has driven deep into the north tunnel throat, and
+      // respawn it hidden inside the south tunnel throat.
+      if (bus.position.z > HALF_Z + 12) bus.position.z = -HALF_Z - 12;
     }
   }
 

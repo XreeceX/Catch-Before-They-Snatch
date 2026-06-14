@@ -45,10 +45,10 @@ interface PropDef {
 const R2 = "https://r2-pub.rork.com/generated-3d-models/yfgqeifpmt8941tk7v8l3";
 const BUILDING_A = `${R2}/d76fd982-7ff6-4ba0-a8ae-66528e342aa7`;
 const BUILDING_B = `${R2}/1a48df9f-9858-4fb6-a449-4e0d1c733cb8`;
-// New London building variants (filled in after Meshy generation completes).
-const BUILDING_TALL = `PENDING_tall`;
-const BUILDING_WIDE = `PENDING_wide`;
-const BUILDING_MODERN = `PENDING_modern`;
+// New London building variants (varied heights/widths for the far-bank terraces).
+const BUILDING_TALL = `${R2}/024c07c7-c7ae-4b17-8c62-b1beb55d051f`;
+const BUILDING_WIDE = `${R2}/340f9eaf-135b-4710-bf2a-a23ec13fe833`;
+const BUILDING_MODERN = `${R2}/de3c7d25-2bac-490e-95d7-20023d6f6c80`;
 const LAMP = `${R2}/7ed69813-75a1-484b-81eb-9242e1788e66`;
 const CRATE = `${R2}/ac60ef7f-de27-41af-9b1b-172c714e7d1b`;
 // Wet London street paving (replaces the older road slab for a better surface).

@@ -198,6 +198,9 @@ interface Person {
   prev: THREE.Vector3;
   /** Deterministic civilian look index (online crowd) — undefined = random. */
   variant?: number;
+  /** Accumulated time + frame counter for distance-based animation throttling. */
+  animAccum: number;
+  animFrame: number;
 }
 
 interface Powerup {
@@ -484,6 +487,11 @@ export class GameEngine {
   private audio = new AudioManager(); // one-shot game SFX
   private timeWarned = false; // "10 seconds left" alarm fired this round?
 
+  // reusable scratch vectors to avoid per-frame allocations in the render loop
+  private readonly _v1 = new THREE.Vector3();
+  private readonly _v2 = new THREE.Vector3();
+  private readonly _v3 = new THREE.Vector3();
+
   /** Combined asset-load progress (0..1) across characters + props. */
   get assetProgress(): number {
     return (this.charModels.progress + this.propModels.progress) / 2;
@@ -496,10 +504,14 @@ export class GameEngine {
 
   constructor(canvas: HTMLCanvasElement, setHud: (s: HudState) => void) {
     this.setHud = setHud;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+    // Cap the device pixel ratio: above ~1.5 the extra pixels cost a lot of
+    // fill-rate for little visible gain on a fast-moving FPS view.
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // The sun never moves, so the shadow map only needs re-rendering for the
+    // moving crowd — keeping it at a modest resolution halves the shadow pass.
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
 
@@ -540,7 +552,7 @@ export class GameEngine {
     const sun = new THREE.DirectionalLight(0xfff2dc, 2.1);
     sun.position.set(70, 110, 60);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(1024, 1024);
     sun.shadow.camera.left = -HALF_X - 20;
     sun.shadow.camera.right = HALF_X + 20;
     sun.shadow.camera.top = HALF_Z + 20;
@@ -1575,7 +1587,7 @@ export class GameEngine {
 
   /** Track a person for animated-model upgrade + per-frame locomotion. */
   private registerPerson(group: THREE.Group, body: THREE.Group, kind: CharKind, variant?: number): void {
-    const person: Person = { group, body, kind, char: null, prev: group.position.clone(), variant };
+    const person: Person = { group, body, kind, char: null, prev: group.position.clone(), variant, animAccum: 0, animFrame: 0 };
     if (this.charModels.ready) this.attachChar(person);
     this.people.push(person);
   }
@@ -1611,13 +1623,29 @@ export class GameEngine {
   /** Advance every character's animation mixer, picking locomotion from speed. */
   private updateCharacters(dt: number): void {
     if (dt <= 0) return;
+    const px = this.camera.position.x;
+    const pz = this.camera.position.z;
     for (const p of this.people) {
       if (!p.char) continue;
+      // Throttle skeleton updates by distance: distant crowd members animate at
+      // a lower rate (the skinning + mixer work is the dominant CPU cost), while
+      // nearby characters stay buttery smooth. Time accumulates between updates
+      // so playback speed is preserved when frames are skipped.
+      const ddx = p.group.position.x - px;
+      const ddz = p.group.position.z - pz;
+      const distSq = ddx * ddx + ddz * ddz;
+      const interval = distSq > 85 * 85 ? 4 : distSq > 45 * 45 ? 2 : 1;
+      p.animAccum += dt;
+      p.animFrame += 1;
+      if (p.animFrame < interval) continue;
+      const adt = p.animAccum;
       const dx = p.group.position.x - p.prev.x;
       const dz = p.group.position.z - p.prev.z;
-      const speed = Math.sqrt(dx * dx + dz * dz) / dt;
-      p.char.update(dt, speed);
+      const speed = Math.sqrt(dx * dx + dz * dz) / adt;
+      p.char.update(adt, speed);
       p.prev.set(p.group.position.x, p.group.position.y, p.group.position.z);
+      p.animAccum = 0;
+      p.animFrame = 0;
     }
   }
 
@@ -1876,9 +1904,9 @@ export class GameEngine {
   }
 
   private movePlayer(dt: number): void {
-    const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-    const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const move = new THREE.Vector3();
+    const forward = this._v1.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    const right = this._v2.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    const move = this._v3.set(0, 0, 0);
     if (this.keys["KeyW"] || this.keys["ArrowUp"]) move.add(forward);
     if (this.keys["KeyS"] || this.keys["ArrowDown"]) move.sub(forward);
     if (this.keys["KeyD"] || this.keys["ArrowRight"]) move.add(right);
@@ -2517,12 +2545,12 @@ export class GameEngine {
 
   private updateCamera(): void {
     this.camera.position.set(this.playerPos.x, EYE, this.playerPos.z);
-    const dir = new THREE.Vector3(
+    const dir = this._v1.set(
       -Math.sin(this.yaw) * Math.cos(this.pitch),
       Math.sin(this.pitch),
       -Math.cos(this.yaw) * Math.cos(this.pitch)
     );
-    this.camera.lookAt(this.camera.position.clone().add(dir));
+    this.camera.lookAt(this._v2.copy(this.camera.position).add(dir));
   }
 
   /* --------------------------- online --------------------------- */

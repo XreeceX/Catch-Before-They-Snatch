@@ -53,7 +53,7 @@ export type ServerMessage =
       players: NetPlayer[];
       crates: { id: string; x: number; z: number }[];
       traps: { id: string; x: number; z: number }[];
-      decoys: { id: string; x: number; z: number }[];
+      smokes: { id: string; x: number; z: number }[];
     }
   | { t: "intel"; kind: "reveal"; ids: string[]; until: number }
   | { t: "intel"; kind: "track"; id: string; until: number }

@@ -2122,8 +2122,8 @@ export class GameEngine {
     const invisible = this.hasEffect("invisible");
     let target: THREE.Vector3;
 
-    if (this.decoy && this.decoyTime > 0) {
-      target = (this.decoy as THREE.Object3D).position.clone().setY(0);
+    if (this.smoke && this.smokeTime > 0) {
+      target = (this.smoke as THREE.Object3D).position.clone().setY(0);
     } else if (!invisible && this.copSuspicion > 0.4) {
       target = playerGround.clone();
     } else {
@@ -2226,11 +2226,11 @@ export class GameEngine {
         this.audio.play("powerup_pickup");
       }
     }
-    if (this.decoyTime > 0) {
-      this.decoyTime -= dt;
-      if (this.decoyTime <= 0 && this.decoy) {
-        this.scene.remove(this.decoy);
-        this.decoy = null;
+    if (this.smokeTime > 0) {
+      this.smokeTime -= dt;
+      if (this.smokeTime <= 0 && this.smoke) {
+        this.scene.remove(this.smoke);
+        this.smoke = null;
       }
     }
   }
@@ -2242,7 +2242,7 @@ export class GameEngine {
       kind === "speed" ? 0x36e0a0 :
       kind === "invisible" ? 0x8a7dff :
       kind === "track_cop" ? 0x57c7ff :
-      kind === "decoy" ? 0xffd24a :
+      kind === "smoke" ? 0xb8c0c8 :
       kind === "reveal" ? 0x57c7ff :
       0xff6b35;
     const gen = this.propModels.ready ? this.propModels.create("crate") : null;
@@ -2432,8 +2432,8 @@ export class GameEngine {
         this.effects.push({ kind, remaining: 3, duration: 3 });
         this.fire("Scanning the crowd");
         break;
-      case "decoy":
-        this.dropDecoy();
+      case "smoke":
+        this.dropSmoke();
         break;
       case "trap":
         this.dropTrap();
@@ -2441,22 +2441,20 @@ export class GameEngine {
     }
   }
 
-  private dropDecoy(): void {
-    if (this.decoy) this.scene.remove(this.decoy);
-    const m = new THREE.Mesh(
-      new THREE.SphereGeometry(0.4, 10, 10),
-      new THREE.MeshStandardMaterial({ color: 0xffd24a, emissive: 0xffaa00, emissiveIntensity: 0.8 })
-    );
-    const front = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).multiplyScalar(8);
+  private dropSmoke(): void {
+    if (this.smoke) this.scene.remove(this.smoke);
+    const front = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)).multiplyScalar(4);
+    const m = this.makeSmokeMesh();
     m.position.set(
       clamp(this.playerPos.x + front.x, -HALF_X + 2, HALF_X - 2),
-      0.5,
+      0,
       clamp(this.playerPos.z + front.z, -HALF_Z + 2, HALF_Z - 2)
     );
     this.scene.add(m);
-    this.decoy = m;
-    this.decoyTime = 8;
-    this.fire("Decoy thrown — cop distracted");
+    this.smoke = m;
+    this.smokeTime = 8;
+    this.audio.play("smoke_deploy");
+    this.fire("Smoke bomb deployed — cop blinded");
   }
 
   private dropTrap(): void {
@@ -2620,8 +2618,8 @@ export class GameEngine {
     this.netCrates.clear();
     for (const g of this.netTraps.values()) this.scene.remove(g);
     this.netTraps.clear();
-    for (const g of this.netDecoys.values()) this.scene.remove(g);
-    this.netDecoys.clear();
+    for (const g of this.netSmokes.values()) this.scene.remove(g);
+    this.netSmokes.clear();
     if (this.copMarker) {
       this.scene.remove(this.copMarker);
       this.copMarker = null;
@@ -2682,7 +2680,7 @@ export class GameEngine {
     this.syncRemote(s.players);
     this.syncEntities(s.crates, this.netCrates, () => this.makeCrateMesh());
     this.syncEntities(s.traps, this.netTraps, () => this.makeTrapMesh());
-    this.syncEntities(s.decoys, this.netDecoys, () => this.makeDecoyMesh());
+    this.syncEntities(s.smokes, this.netSmokes, () => this.makeSmokeMesh());
     if (this.status === "playing") this.pushHud();
   }
 
@@ -2848,14 +2846,27 @@ export class GameEngine {
     return g;
   }
 
-  private makeDecoyMesh(): THREE.Group {
+  private makeSmokeMesh(): THREE.Group {
     const g = new THREE.Group();
-    const m = new THREE.Mesh(
-      new THREE.SphereGeometry(0.4, 10, 10),
-      new THREE.MeshStandardMaterial({ color: 0xffd24a, emissive: 0xffaa00, emissiveIntensity: 0.9 }),
-    );
-    g.add(m);
-    g.position.y = 0.5;
+    // A soft cluster of translucent puffs reading as a billowing smoke screen.
+    const puff = new THREE.SphereGeometry(1.1, 12, 12);
+    for (let i = 0; i < 6; i++) {
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xc4ccd2,
+        transparent: true,
+        opacity: 0.55,
+        roughness: 1,
+      });
+      const m = new THREE.Mesh(puff, mat);
+      m.position.set(
+        (Math.random() * 2 - 1) * 1.3,
+        0.6 + Math.random() * 1.4,
+        (Math.random() * 2 - 1) * 1.3,
+      );
+      const s = 0.7 + Math.random() * 0.8;
+      m.scale.setScalar(s);
+      g.add(m);
+    }
     return g;
   }
 
@@ -3086,8 +3097,8 @@ export class GameEngine {
         this.effects.push({ kind, remaining: 3, duration: 3 });
         this.fire("Scanning the crowd");
         break;
-      case "decoy":
-        this.fire("Decoy thrown");
+      case "smoke":
+        this.fire("Smoke bomb deployed");
         break;
       case "trap":
         this.fire("Bear trap armed");

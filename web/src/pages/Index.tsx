@@ -11,7 +11,7 @@ import {
   Eye,
   EyeOff,
   Radar,
-  Volume2,
+  Cloud,
   Magnet,
   Package,
   Globe,
@@ -67,7 +67,7 @@ const POWER_ICON: Record<PowerKind, typeof Zap> = {
   track_cop: Radar,
   speed: Zap,
   invisible: EyeOff,
-  decoy: Volume2,
+  smoke: Cloud,
   reveal: Eye,
   trap: Magnet,
 };

@@ -16,7 +16,7 @@ type Env = {
 type Role = "cop" | "snatcher";
 type Status = "lobby" | "playing" | "gameover";
 type Winner = "cop" | "snatchers" | null;
-type PowerKind = "track_cop" | "speed" | "invisible" | "decoy" | "reveal" | "trap";
+type PowerKind = "track_cop" | "speed" | "invisible" | "smoke" | "reveal" | "trap";
 
 const ROUND_TIME = 240;
 const PHONE_TARGET = 5;
@@ -30,7 +30,7 @@ const TICK_MS = 66; // ~15 Hz authoritative broadcast
 const MAX_PLAYERS = 6;
 const CROWD_COUNT = 18;
 
-const SNATCHER_POWERS: PowerKind[] = ["track_cop", "speed", "invisible", "decoy"];
+const SNATCHER_POWERS: PowerKind[] = ["track_cop", "speed", "invisible", "smoke"];
 const COP_POWERS: PowerKind[] = ["reveal", "speed", "trap"];
 
 interface Player {
@@ -60,7 +60,7 @@ interface Trap {
   z: number;
 }
 
-interface Decoy {
+interface Smoke {
   id: string;
   x: number;
   z: number;
@@ -91,7 +91,7 @@ export class GameRoom extends DurableObject<Env> {
   private crowdSeed = Math.floor(Math.random() * 1e9);
   private crates: Crate[] = [];
   private traps: Trap[] = [];
-  private decoys: Decoy[] = [];
+  private smokes: Smoke[] = [];
   private spawnAt = 0;
   private tickHandle: ReturnType<typeof setInterval> | null = null;
   private lastReport = 0;
@@ -266,7 +266,7 @@ export class GameRoom extends DurableObject<Env> {
     this.winner = null;
     this.crates = [];
     this.traps = [];
-    this.decoys = [];
+    this.smokes = [];
     this.spawnAt = Date.now() + 5000;
 
     for (const ws of this.ctx.getWebSockets()) {
@@ -349,10 +349,11 @@ export class GameRoom extends DurableObject<Env> {
         this.traps.push({ id: crypto.randomUUID(), x: me.x, z: me.z });
         break;
       }
-      case "decoy": {
-        const fx = me.x - Math.sin(me.yaw) * 8;
-        const fz = me.z - Math.cos(me.yaw) * 8;
-        this.decoys.push({
+      case "smoke": {
+        if (me.role !== "snatcher") return;
+        const fx = me.x - Math.sin(me.yaw) * 4;
+        const fz = me.z - Math.cos(me.yaw) * 4;
+        this.smokes.push({
           id: crypto.randomUUID(),
           x: clamp(fx, -HALF_X, HALF_X),
           z: clamp(fz, -HALF_Z, HALF_Z),
@@ -398,8 +399,8 @@ export class GameRoom extends DurableObject<Env> {
         this.spawnAt = now + rand(11000, 17000) * 1;
       }
 
-      // expire decoys
-      this.decoys = this.decoys.filter((d) => d.until > now);
+      // expire smoke screens
+      this.smokes = this.smokes.filter((d) => d.until > now);
 
       // complete held snatches (credit one phone per 3s hold)
       for (const p of this.players.values()) {
@@ -495,7 +496,7 @@ export class GameRoom extends DurableObject<Env> {
       players,
       crates: this.crates,
       traps: this.traps,
-      decoys: this.decoys.map((d) => ({ id: d.id, x: d.x, z: d.z })),
+      smokes: this.smokes.map((d) => ({ id: d.id, x: d.x, z: d.z })),
     });
     for (const ws of this.ctx.getWebSockets()) {
       try {

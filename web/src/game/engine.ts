@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { CharacterModels, CharacterInstance, CharKind } from "./characters";
-import { PropModels } from "./props";
+import { PropModels, type PropKind } from "./props";
 import { AudioManager, type SfxName } from "./audio";
 
 /* ------------------------------------------------------------------ *
@@ -58,6 +58,8 @@ export interface HudState {
   snatchAlerts: number[];
   /** True while the round is paused and the pause menu is shown. */
   paused: boolean;
+  /** True when the player is near the bridge (shows the "in development" notice). */
+  nearBridge: boolean;
 }
 
 const POWER_META: Record<PowerKind, PowerMeta> = {
@@ -292,6 +294,41 @@ function glowTexture(): THREE.Texture {
   return new THREE.CanvasTexture(c);
 }
 
+/** Weathered stone slab texture for the bridge deck and parapet. */
+function bridgeTexture(): THREE.Texture {
+  const { c, ctx } = makeCanvas(256);
+  ctx.fillStyle = "#a9a394";
+  ctx.fillRect(0, 0, 256, 256);
+  // mottled grime speckle
+  for (let i = 0; i < 4000; i++) {
+    const g = Math.floor(rand(120, 175));
+    ctx.fillStyle = `rgba(${g},${g - 6},${g - 18},0.4)`;
+    ctx.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
+  }
+  // ashlar block joints — staggered courses
+  ctx.strokeStyle = "rgba(70,66,56,0.85)";
+  ctx.lineWidth = 3;
+  const bh = 42;
+  const bw = 86;
+  for (let row = 0; row * bh <= 256; row++) {
+    const y = row * bh;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(256, y);
+    ctx.stroke();
+    const off = row % 2 === 0 ? 0 : bw / 2;
+    for (let x = off; x <= 256; x += bw) {
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x, y + bh);
+      ctx.stroke();
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
 function waterTexture(): THREE.Texture {
   const { c, ctx } = makeCanvas(256);
   ctx.fillStyle = "#1f4f6b";
@@ -407,6 +444,7 @@ export class GameEngine {
   private prompt = "";
   private toast = "";
   private toastKey = 0;
+  private nearBridge = false;
   private spawnTimer = 6;
   private copSuspicion = 0; // for snatcher player: how aware AI cop is
 
@@ -1044,8 +1082,12 @@ export class GameEngine {
     const centerZ = (nearZ + farZ) / 2;
     const DECK_TOP = 0.32; // top surface of the walkable deck
 
-    const stoneMat = new THREE.MeshStandardMaterial({ color: 0xa9a394, roughness: 0.95 });
-    const trimMat = new THREE.MeshStandardMaterial({ color: 0x8a8273, roughness: 0.9 });
+    const deckTex = bridgeTexture();
+    deckTex.repeat.set(Math.max(2, Math.round(half / 3)), Math.max(4, Math.round(span / 6)));
+    const stoneMat = new THREE.MeshStandardMaterial({ map: deckTex, color: 0xb8b2a2, roughness: 0.95 });
+    const wallTex = bridgeTexture();
+    wallTex.repeat.set(1, Math.max(6, Math.round(span / 5)));
+    const trimMat = new THREE.MeshStandardMaterial({ map: wallTex, color: 0x9a9282, roughness: 0.9 });
 
     // Walkable stone deck slab — top at DECK_TOP so the player crosses on it.
     const deck = new THREE.Mesh(new THREE.BoxGeometry(half * 2, 0.4, span), stoneMat);
@@ -1782,6 +1824,7 @@ export class GameEngine {
     }
 
     this.movePlayer(dt);
+    this.nearBridge = this.playerPos.z > RIVER_NEAR - 16;
     this.updateEffects(dt);
     this.updateAgents(dt);
     this.updateSnatch(dt);
@@ -1849,14 +1892,12 @@ export class GameEngine {
     this.stepPlayer(move.x * dt, move.z * dt);
   }
 
-  /** True if a point lies on a walkable surface (street, bridge corridor, or
-   *  far-bank plaza) — used to keep players off the river and out of the void. */
+  /** True if a point lies on a walkable surface. The far bank is still under
+   *  development, so the bridge is closed off — players are confined to the
+   *  street and can approach, but not cross, the bridge. */
   private isWalkable(x: number, z: number): boolean {
     const W = HALF_X - 0.6;
-    const bh = Math.max(this.bridgeHalf - 0.6, 1);
     if (z >= -HALF_Z + 1 && z <= RIVER_NEAR) return Math.abs(x) <= W; // street
-    if (z > RIVER_NEAR && z < RIVER_FAR) return Math.abs(x) <= bh; // bridge corridor
-    if (z >= RIVER_FAR && z <= FAR_BANK_MAX_Z) return Math.abs(x) <= W; // far plaza
     return false;
   }
 
@@ -2809,6 +2850,7 @@ export class GameEngine {
 
   private updateOnline(dt: number): void {
     this.moveOnlinePlayer(dt);
+    this.nearBridge = this.playerPos.z > RIVER_NEAR - 16;
     this.updateEffects(dt);
 
     // throttled position upload (~15Hz)
@@ -3125,6 +3167,7 @@ export class GameEngine {
       snatchProgress: clamp(this.snatchCharge / SNATCH_TIME, 0, 1),
       snatchAlerts: this.snatchAlerts,
       paused: this.paused,
+      nearBridge: this.nearBridge,
     });
   }
 
@@ -3155,6 +3198,7 @@ export class GameEngine {
       snatchProgress: clamp(this.snatchCharge / SNATCH_TIME, 0, 1),
       snatchAlerts: this.snatchAlerts,
       paused: this.paused,
+      nearBridge: this.nearBridge,
     });
   }
 }

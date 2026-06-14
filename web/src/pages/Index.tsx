@@ -60,6 +60,7 @@ const INITIAL_HUD: HudState = {
   snatchProgress: 0,
   snatchAlerts: [],
   paused: false,
+  nearBridge: false,
 };
 
 const POWER_ICON: Record<PowerKind, typeof Zap> = {
@@ -250,6 +251,7 @@ const Practice = ({
       {hud.status === "playing" && <SnatchProgress progress={hud.snatchProgress} />}
       {hud.status === "playing" && isCop && <SnatchAlerts bearings={hud.snatchAlerts} />}
       {hud.status === "playing" && <Toast text={hud.toast} k={hud.toastKey} />}
+      {hud.status === "playing" && <DevNotice show={hud.nearBridge} />}
       {hud.status === "playing" && <InGameHud hud={hud} isCop={isCop} />}
       {hud.status === "playing" && hud.paused && (
         <PauseMenu
@@ -879,6 +881,33 @@ const Toast = ({ text, k }: { text: string; k: number }) => {
         className="animate-pop-in whitespace-nowrap rounded-full border border-white/15 bg-card/85 px-5 py-2 font-display text-sm font-bold uppercase tracking-wider text-foreground backdrop-blur"
       >
         {text}
+      </div>
+    </div>
+  );
+};
+
+/** Subtle banner shown when the player nears the (closed) bridge. Purely
+ *  informational — it never blocks input or gameplay. */
+const DevNotice = ({ show }: { show: boolean }) => {
+  const [render, setRender] = useState(false);
+  useEffect(() => {
+    if (show) {
+      setRender(true);
+      return;
+    }
+    const t = setTimeout(() => setRender(false), 250);
+    return () => clearTimeout(t);
+  }, [show]);
+  if (!render) return null;
+  return (
+    <div className="pointer-events-none absolute left-1/2 top-20 z-20 -translate-x-1/2">
+      <div
+        className={`flex items-center gap-2 whitespace-nowrap rounded-full border border-amber-400/40 bg-amber-500/15 px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-amber-200 backdrop-blur transition-all duration-200 ${
+          show ? "translate-y-0 opacity-100" : "-translate-y-2 opacity-0"
+        }`}
+      >
+        <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300" />
+        Area still in development
       </div>
     </div>
   );

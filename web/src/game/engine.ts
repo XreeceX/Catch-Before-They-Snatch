@@ -1306,21 +1306,30 @@ export class GameEngine {
 
   /** Line both sides of the street with cloned generated building facades. */
   private buildGeneratedBuildings(): void {
-    const dimsA = this.propModels.dims("buildingA");
-    const dimsB = this.propModels.dims("buildingB");
-    const widthA = dimsA.x || 12;
-    const widthB = dimsB.x || 12;
+    // Mix the original facades with the newer varied Meshy buildings so the
+    // main street no longer repeats the same two blocks down its length.
+    const kinds: PropKind[] = [
+      "buildingA",
+      "buildingTall",
+      "buildingB",
+      "buildingModern",
+      "buildingWide",
+    ];
+    const available = kinds.filter((k) => this.propModels.has(k));
+    if (available.length === 0) return;
     for (const side of [-1, 1]) {
       // side -1 (negative X) facade faces +X (inward) → +90° yaw; side +1 → -90°.
       const yaw = side === -1 ? Math.PI / 2 : -Math.PI / 2;
       let z = -HALF_Z;
-      let toggle = Math.random() < 0.5;
+      // Offset the starting index per side so the two rows don't mirror.
+      let i = side === -1 ? 0 : 2;
       while (z < HALF_Z) {
-        const kind = toggle ? "buildingA" : "buildingB";
-        const width = toggle ? widthA : widthB;
-        const depth = (toggle ? dimsA.z : dimsB.z) || 8;
+        const kind = available[i % available.length];
+        i += 1;
+        const dims = this.propModels.dims(kind);
+        const width = dims.x || 12;
+        const depth = dims.z || 8;
         const b = this.propModels.create(kind);
-        toggle = !toggle;
         if (!b) break;
         b.rotation.y = yaw;
         // facade front sits just behind the pavement edge.

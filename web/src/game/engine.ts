@@ -579,49 +579,58 @@ export class GameEngine {
     this.rebuildBuses();
   }
 
-  /** Stone portal tunnels at both ends of the street that buses drive in and
-   *  out of, so traffic no longer pops out of thin air at the map edge. The
-   *  side pillars hug the building line and the arch sits high overhead, so the
-   *  central road — and the bridge crossing — stay fully open underneath. */
+  /** A single stone hillside tunnel portal at the south end of the street that
+   *  buses drive out of, so traffic no longer pops out of thin air. The
+   *  riverside end is left open so the Big Ben / London Eye skyline stays in
+   *  full view. Uses the generated Meshy portal when loaded, otherwise a
+   *  procedural stone arch fallback. */
   private buildTunnels(): void {
+    const portalZ = -HALF_Z + 2;
+    const model = this.propModels.has("tunnel") ? this.propModels.create("tunnel") : null;
+    if (model) {
+      // The model's dark mouth faces +Z (into the play area). Push it back so
+      // the rocky hillside straddles the map edge and buses emerge from shadow.
+      model.position.set(0, 0, portalZ - 4);
+      this.streetGroup.add(model);
+      return;
+    }
+    this.buildTunnelFallback(portalZ);
+  }
+
+  /** Procedural stone arch portal used until the generated tunnel model loads. */
+  private buildTunnelFallback(portalZ: number): void {
     const W = HALF_X - 0.6;
     const stone = new THREE.MeshStandardMaterial({ color: 0x70757b, roughness: 0.95 });
     const trim = new THREE.MeshStandardMaterial({ color: 0x595d63, roughness: 0.95 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x07090d, roughness: 1 });
     const throat = 18;
-    for (const end of [-1, 1] as const) {
-      const g = new THREE.Group();
-      // side pillars hugging the pavements
-      for (const side of [-1, 1]) {
-        const pillar = new THREE.Mesh(new THREE.BoxGeometry(6, 13, 8), stone);
-        pillar.position.set(side * (W - 2), 6.5, 0);
-        pillar.castShadow = true;
-        pillar.receiveShadow = true;
-        g.add(pillar);
-      }
-      // overhead lintel spanning the road, clearing the buses below
-      const lintel = new THREE.Mesh(new THREE.BoxGeometry(W * 2 + 4, 4, 9), stone);
-      lintel.position.set(0, 12.5, 0);
-      lintel.castShadow = true;
-      g.add(lintel);
-      // decorative cornice band under the lintel
-      const band = new THREE.Mesh(new THREE.BoxGeometry(W * 2 + 2, 1, 9.6), trim);
-      band.position.set(0, 10.2, 0);
-      g.add(band);
-      // dark recessed throat (ceiling + side walls) extending away from the
-      // play area so buses sit hidden in shadow before they emerge.
-      const cz = end * (throat / 2 + 2);
-      const ceiling = new THREE.Mesh(new THREE.BoxGeometry(W * 2, 0.8, throat), dark);
-      ceiling.position.set(0, 9.4, cz);
-      g.add(ceiling);
-      for (const side of [-1, 1]) {
-        const wall = new THREE.Mesh(new THREE.BoxGeometry(1, 10, throat), dark);
-        wall.position.set(side * W, 5, cz);
-        g.add(wall);
-      }
-      g.position.z = end === -1 ? -HALF_Z + 1 : HALF_Z - 1;
-      this.streetGroup.add(g);
+    const g = new THREE.Group();
+    for (const side of [-1, 1]) {
+      const pillar = new THREE.Mesh(new THREE.BoxGeometry(6, 13, 8), stone);
+      pillar.position.set(side * (W - 2), 6.5, 0);
+      pillar.castShadow = true;
+      pillar.receiveShadow = true;
+      g.add(pillar);
     }
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(W * 2 + 4, 4, 9), stone);
+    lintel.position.set(0, 12.5, 0);
+    lintel.castShadow = true;
+    g.add(lintel);
+    const band = new THREE.Mesh(new THREE.BoxGeometry(W * 2 + 2, 1, 9.6), trim);
+    band.position.set(0, 10.2, 0);
+    g.add(band);
+    // dark recessed throat (ceiling + side walls) extending behind the map edge.
+    const cz = -(throat / 2 + 2);
+    const ceiling = new THREE.Mesh(new THREE.BoxGeometry(W * 2, 0.8, throat), dark);
+    ceiling.position.set(0, 9.4, cz);
+    g.add(ceiling);
+    for (const side of [-1, 1]) {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(1, 10, throat), dark);
+      wall.position.set(side * W, 5, cz);
+      g.add(wall);
+    }
+    g.position.z = portalZ;
+    this.streetGroup.add(g);
   }
 
   /** Scatter classic red telephone boxes along both pavements. */
@@ -848,7 +857,7 @@ export class GameEngine {
     for (let i = 0; i < 3; i++) {
       const bus = this.makeBus();
       // stagger start positions so a bus is always emerging from the south tunnel
-      bus.position.set(lanes[i], 0, -HALF_Z - 10 + i * 30);
+      bus.position.set(lanes[i], 0, -HALF_Z - 14 + i * 30);
       this.buses.push(bus);
       this.scene.add(bus);
     }
@@ -1932,9 +1941,9 @@ export class GameEngine {
   private updateBuses(dt: number): void {
     for (const bus of this.buses) {
       bus.position.z += dt * 5;
-      // recycle once the bus has driven deep into the north tunnel throat, and
-      // respawn it hidden inside the south tunnel throat.
-      if (bus.position.z > HALF_Z + 12) bus.position.z = -HALF_Z - 12;
+      // The riverside end is open (no tunnel), so recycle buses just before the
+      // embankment and respawn them hidden deep inside the south tunnel throat.
+      if (bus.position.z > RIVER_NEAR - 6) bus.position.z = -HALF_Z - 14;
     }
   }
 

@@ -589,12 +589,49 @@ export class GameEngine {
     const model = this.propModels.has("tunnel") ? this.propModels.create("tunnel") : null;
     if (model) {
       // The model's dark mouth faces +Z (into the play area). Push it back so
-      // the rocky hillside straddles the map edge and buses emerge from shadow.
+      // the portal straddles the map edge and buses emerge from shadow.
       model.position.set(0, 0, portalZ - 4);
       this.streetGroup.add(model);
-      return;
+    } else {
+      this.buildTunnelFallback(portalZ);
     }
-    this.buildTunnelFallback(portalZ);
+    this.buildTunnelInterior(portalZ);
+  }
+
+  /** Pitch-black recessed interior (floor, ceiling, side walls and back wall)
+   *  set behind the portal so the tunnel mouth reads as a true dark void, and a
+   *  solid wall of colliders across the mouth so players/NPCs cannot walk in. */
+  private buildTunnelInterior(portalZ: number): void {
+    const W = HALF_X - 0.6;
+    const depth = 44;
+    const cz = portalZ - depth / 2 - 1; // throat centre, behind the map edge
+    const black = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 1, metalness: 0 });
+    const g = new THREE.Group();
+    // dark floor (covers the road texture inside the throat)
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(W * 2, 0.2, depth), black);
+    floor.position.set(0, 0.12, cz);
+    g.add(floor);
+    // ceiling
+    const ceiling = new THREE.Mesh(new THREE.BoxGeometry(W * 2, 0.8, depth), black);
+    ceiling.position.set(0, 13.5, cz);
+    g.add(ceiling);
+    // side walls
+    for (const side of [-1, 1]) {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(1.2, 14, depth), black);
+      wall.position.set(side * W, 7, cz);
+      g.add(wall);
+    }
+    // back wall sealing the far end of the throat
+    const back = new THREE.Mesh(new THREE.BoxGeometry(W * 2, 14, 1.2), black);
+    back.position.set(0, 7, cz - depth / 2);
+    g.add(back);
+    this.streetGroup.add(g);
+
+    // Solid collider wall across the tunnel mouth so nothing can walk inside.
+    const r = 1.6;
+    for (let x = -W; x <= W; x += r * 1.5) {
+      this.colliders.push({ x, z: portalZ + 1.5, r });
+    }
   }
 
   /** Procedural stone arch portal used until the generated tunnel model loads. */

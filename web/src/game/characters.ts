@@ -267,10 +267,15 @@ export class CharacterInstance {
       this.state = next;
     }
     // Couple the locomotion clip's playback to ground speed so feet track the
-    // ground instead of sliding (the "moonwalk" footskate effect).
-    if (next === "walk" || next === "run") {
-      const active = this.actions[next];
-      if (active) active.timeScale = Math.max(0.65, Math.min(2.2, locomotion / 1.6));
+    // ground instead of sliding (the "moonwalk"/gliding footskate effect). Each
+    // clip has its own natural cadence, so walk and run reference different base
+    // speeds — without this, fast players (~7 m/s) clamp the walk cycle and glide.
+    if (next === "walk") {
+      const active = this.actions.walk;
+      if (active) active.timeScale = Math.max(0.7, Math.min(1.9, locomotion / 1.6));
+    } else if (next === "run") {
+      const active = this.actions.run;
+      if (active) active.timeScale = Math.max(0.8, Math.min(1.8, locomotion / 4.6));
     }
     this.mixer.update(dt);
   }

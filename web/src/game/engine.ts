@@ -183,6 +183,10 @@ interface Agent {
   snatchTarget: Agent | null;
   /** Civilian victim: someone is mid-snatch on them this frame → stand and resist. */
   beingSnatched: boolean;
+  /** Stop-and-look-around: seconds remaining standing still (0 = walking). */
+  pauseT: number;
+  /** Seconds until this agent next considers stopping to look around. */
+  pauseCd: number;
   /** Deterministic looping route for online crowd (shared across clients). */
   path: CrowdPath | null;
   /** Perceived gender of the look — drives which scream plays on snatch. */
@@ -1531,7 +1535,7 @@ export class GameEngine {
       hasPhone: type === "civilian",
       phoneMesh: phone,
       wander: this.randomPoint(),
-      speed: type === "cop" ? COP_SPEED : rand(2.5, 4),
+      speed: type === "cop" ? COP_SPEED : SNATCHER_SPEED,
       trapped: 0,
       stealCd: rand(4, 10),
       fleeing: false,
@@ -1540,6 +1544,8 @@ export class GameEngine {
       snatchT: 0,
       snatchTarget: null,
       beingSnatched: false,
+      pauseT: 0,
+      pauseCd: rand(3, 10),
       path: null,
       gender: this.charModels.genderForVariant(variant),
     };
@@ -2186,6 +2192,16 @@ export class GameEngine {
   }
 
   private wanderAgent(a: Agent, dt: number): void {
+    // Stop-and-look-around: civilians periodically halt and slowly sweep their
+    // gaze instead of marching nonstop. Standing still (no translation) makes
+    // updateCharacters pick the idle clip. Fleeing agents never pause.
+    if (a.pauseT > 0) {
+      a.pauseT -= dt;
+      a.group.rotation.y += Math.sin(a.pauseT * 2.2) * dt * 1.3;
+      return;
+    }
+    a.pauseCd -= dt;
+
     if (a.group.position.distanceTo(a.wander) < 2) {
       a.wander = this.randomPoint();
       a.fleeing = false;
@@ -2202,6 +2218,11 @@ export class GameEngine {
       a.group.position.x = res.x;
       a.group.position.z = res.z;
       a.group.rotation.y = Math.atan2(dir.x, dir.z);
+    }
+    // Once the cooldown elapses, begin a fresh stop-and-look-around beat.
+    if (a.pauseCd <= 0 && !a.fleeing) {
+      a.pauseT = rand(1.4, 3.6);
+      a.pauseCd = rand(6, 13);
     }
   }
 

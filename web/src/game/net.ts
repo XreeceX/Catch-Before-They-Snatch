@@ -39,7 +39,7 @@ export interface NetPlayer {
 export type ServerMessage =
   | { t: "welcome"; you: string; crowdSeed: number; phoneTarget: number; maxStrikes: number }
   | { t: "lobby"; hostId: string | null; status: "lobby" | "playing" | "gameover"; players: LobbyPlayer[] }
-  | { t: "role"; role: Role }
+  | { t: "role"; role: Role; x: number; z: number; yaw: number }
   | {
       t: "state";
       status: "lobby" | "playing" | "gameover";

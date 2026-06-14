@@ -362,6 +362,8 @@ export class GameEngine {
   // player
   private role: Role = "snatcher";
   private playerPos = new THREE.Vector3(0, EYE, 30);
+  /** Server-assigned spawn for the next online round (random per player). */
+  private pendingSpawn: { x: number; z: number; yaw: number } | null = null;
   private playerVel = new THREE.Vector3();
   private baseSpeed = 7;
 
@@ -2143,8 +2145,9 @@ export class GameEngine {
     this.pushHud();
   }
 
-  setRole(role: Role): void {
+  setRole(role: Role, spawn?: { x: number; z: number; yaw: number }): void {
     this.role = role;
+    if (spawn) this.pendingSpawn = spawn;
     // fresh round: reset local match flags
     this.inventory = null;
     this.effects = [];
@@ -2162,9 +2165,10 @@ export class GameEngine {
     this.timeWarned = false;
     this.audio.prime();
     this.audio.play("game_start");
-    this.playerPos.set(0, EYE, 30);
+    const sp = this.pendingSpawn;
+    this.playerPos.set(sp?.x ?? 0, EYE, sp?.z ?? 30);
     this.playerVel.set(0, 0, 0);
-    this.yaw = Math.PI;
+    this.yaw = sp?.yaw ?? Math.PI;
     this.pitch = 0;
     this.canvas?.requestPointerLock();
     this.pushHud();
@@ -2211,27 +2215,35 @@ export class GameEngine {
     for (const a of this.crowd) this.scene.remove(a.group);
     this.crowd = [];
     const rng = mulberry32(this.crowdSeed);
-    for (let i = 0; i < 18; i++) {
-      // home anchored on the walkable street, clear of the pavements/buildings.
-      const hx = (rng() * 2 - 1) * (HALF_X - 12);
-      const hz = -HALF_Z + 8 + rng() * (RIVER_NEAR - HALF_Z * 0.2 - 8);
-      const path: CrowdPath = {
-        hx,
-        hz,
-        rx: 3 + rng() * 5,
-        rz: 3 + rng() * 5,
-        sx: 0.18 + rng() * 0.22,
-        sz: 0.18 + rng() * 0.22,
-        px: rng() * Math.PI * 2,
-        pz: rng() * Math.PI * 2,
-      };
-      const variant = Math.floor(rng() * 997);
-      const person = this.makePerson("civilian", {
-        variant,
-        pos: new THREE.Vector3(hx, 0, hz),
-      });
-      person.path = path;
-      this.crowd.push(person);
+    // Two zones so the world feels alive on BOTH sides of the river: the near
+    // street, and the far-bank plaza where Big Ben and the London Eye stand.
+    const zones: { count: number; zLo: number; zHi: number }[] = [
+      { count: 20, zLo: -HALF_Z + 8, zHi: RIVER_NEAR - 12 }, // near street
+      { count: 16, zLo: RIVER_FAR + 8, zHi: FAR_BANK_MAX_Z - 12 }, // far-bank landmarks
+    ];
+    for (const zone of zones) {
+      for (let i = 0; i < zone.count; i++) {
+        // home anchored on a walkable surface, clear of pavements/buildings.
+        const hx = (rng() * 2 - 1) * (HALF_X - 12);
+        const hz = zone.zLo + rng() * (zone.zHi - zone.zLo);
+        const path: CrowdPath = {
+          hx,
+          hz,
+          rx: 3 + rng() * 5,
+          rz: 3 + rng() * 5,
+          sx: 0.18 + rng() * 0.22,
+          sz: 0.18 + rng() * 0.22,
+          px: rng() * Math.PI * 2,
+          pz: rng() * Math.PI * 2,
+        };
+        const variant = Math.floor(rng() * 997);
+        const person = this.makePerson("civilian", {
+          variant,
+          pos: new THREE.Vector3(hx, 0, hz),
+        });
+        person.path = path;
+        this.crowd.push(person);
+      }
     }
   }
 

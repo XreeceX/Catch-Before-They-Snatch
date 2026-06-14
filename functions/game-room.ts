@@ -151,7 +151,7 @@ export class GameRoom extends DurableObject<Env> {
     // role so a reconnect doesn't desync.
     const me = this.players.get(playerId);
     if (this.status !== "lobby" && me?.role) {
-      server.send(JSON.stringify({ t: "role", role: me.role }));
+      server.send(JSON.stringify({ t: "role", role: me.role, x: me.x, z: me.z, yaw: me.yaw }));
     }
 
     this.broadcastLobby();
@@ -257,7 +257,7 @@ export class GameRoom extends DurableObject<Env> {
       const sp = spawnPoint();
       p.x = sp.x;
       p.z = sp.z;
-      p.yaw = 0;
+      p.yaw = Math.random() * Math.PI * 2;
     }
     this.status = "playing";
     this.timeLeft = ROUND_TIME;
@@ -271,8 +271,8 @@ export class GameRoom extends DurableObject<Env> {
 
     for (const ws of this.ctx.getWebSockets()) {
       const att = ws.deserializeAttachment() as Attachment | null;
-      const role = att ? this.players.get(att.playerId)?.role : null;
-      if (role) ws.send(JSON.stringify({ t: "role", role }));
+      const p = att ? this.players.get(att.playerId) : null;
+      if (p?.role) ws.send(JSON.stringify({ t: "role", role: p.role, x: p.x, z: p.z, yaw: p.yaw }));
     }
     this.ensureTick();
   }

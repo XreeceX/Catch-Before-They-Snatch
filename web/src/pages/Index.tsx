@@ -313,7 +313,7 @@ const Online = ({
           break;
         case "role":
           setRole(msg.role);
-          engine.setRole(msg.role);
+          engine.setRole(msg.role, { x: msg.x, z: msg.z, yaw: msg.yaw });
           setScreenSafe("reveal");
           break;
         case "state":

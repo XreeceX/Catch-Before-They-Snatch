@@ -18,7 +18,7 @@ export type PowerKind =
   | "track_cop"
   | "speed"
   | "invisible"
-  | "decoy"
+  | "smoke"
   | "reveal"
   | "trap";
 
@@ -66,12 +66,12 @@ const POWER_META: Record<PowerKind, PowerMeta> = {
   track_cop: { kind: "track_cop", label: "Cop Tracker", hint: "Reveals the cop for 30s" },
   speed: { kind: "speed", label: "Sprint", hint: "Move faster for 8s" },
   invisible: { kind: "invisible", label: "Vanish", hint: "Untraceable for 5s" },
-  decoy: { kind: "decoy", label: "Noise Decoy", hint: "Distract the cop" },
+  smoke: { kind: "smoke", label: "Smoke Bomb", hint: "Drop a blinding smoke screen" },
   reveal: { kind: "reveal", label: "Scanner", hint: "Reveals snatchers for 3s" },
   trap: { kind: "trap", label: "Bear Trap", hint: "Drop a trap that freezes a snatcher" },
 };
 
-const SNATCHER_POWERS: PowerKind[] = ["track_cop", "speed", "invisible", "decoy"];
+const SNATCHER_POWERS: PowerKind[] = ["track_cop", "speed", "invisible", "smoke"];
 const COP_POWERS: PowerKind[] = ["reveal", "speed", "trap"];
 
 /** Minimal surface the engine needs from the netcode client (avoids a circular import). */
@@ -102,12 +102,15 @@ export interface NetState {
   players: { id: string; x: number; z: number; yaw: number; alive: boolean; isCop: boolean; snatching: boolean; invisible: boolean }[];
   crates: NetEntity[];
   traps: NetEntity[];
-  decoys: NetEntity[];
+  smokes: NetEntity[];
 }
 
 const ROUND_TIME = 240; // 4 minutes
 const PHONE_TARGET = 5;
 const MAX_STRIKES = 3;
+// Cop moves slightly faster than a snatcher so a chase stays tense.
+const SNATCHER_SPEED = 7;
+const COP_SPEED = 7.7;
 const HALF_X = 44;
 const HALF_Z = 80;
 // River + bridge + far-bank plaza geometry. The street runs to +HALF_Z, then a
@@ -428,8 +431,8 @@ export class GameEngine {
 
   // markers
   private copMarker: THREE.Mesh | null = null;
-  private decoy: THREE.Object3D | null = null;
-  private decoyTime = 0;
+  private smoke: THREE.Object3D | null = null;
+  private smokeTime = 0;
 
   // state
   private status: GameStatus = "lobby";
@@ -457,7 +460,7 @@ export class GameEngine {
   private crowdSeed = 1;
   private netCrates = new Map<string, THREE.Group>();
   private netTraps = new Map<string, THREE.Group>();
-  private netDecoys = new Map<string, THREE.Object3D>();
+  private netSmokes = new Map<string, THREE.Object3D>();
   private srvTimeLeft = ROUND_TIME;
   private srvStrikes = 0;
   private srvPhones = 0;
@@ -1515,7 +1518,7 @@ export class GameEngine {
       hasPhone: type === "civilian",
       phoneMesh: phone,
       wander: this.randomPoint(),
-      speed: type === "cop" ? 6.2 : rand(2.5, 4),
+      speed: type === "cop" ? COP_SPEED : rand(2.5, 4),
       trapped: 0,
       stealCd: rand(4, 10),
       fleeing: false,
@@ -1718,9 +1721,9 @@ export class GameEngine {
       this.scene.remove(this.copMarker);
       this.copMarker = null;
     }
-    if (this.decoy) {
-      this.scene.remove(this.decoy);
-      this.decoy = null;
+    if (this.smoke) {
+      this.scene.remove(this.smoke);
+      this.smoke = null;
     }
 
     // assign role randomly
@@ -1881,7 +1884,8 @@ export class GameEngine {
     if (this.keys["KeyD"] || this.keys["ArrowRight"]) move.add(right);
     if (this.keys["KeyA"] || this.keys["ArrowLeft"]) move.sub(right);
 
-    const speed = this.baseSpeed * (this.hasEffect("speed") ? 1.7 : 1);
+    const base = this.role === "cop" ? COP_SPEED : SNATCHER_SPEED;
+    const speed = base * (this.hasEffect("speed") ? 1.7 : 1);
     if (move.lengthSq() > 0) move.normalize().multiplyScalar(speed);
 
     // check for trap (snatcher player)
@@ -2989,7 +2993,8 @@ export class GameEngine {
     if (this.keys["KeyS"] || this.keys["ArrowDown"]) move.sub(forward);
     if (this.keys["KeyD"] || this.keys["ArrowRight"]) move.add(right);
     if (this.keys["KeyA"] || this.keys["ArrowLeft"]) move.sub(right);
-    const speed = this.baseSpeed * (this.hasEffect("speed") ? 1.7 : 1);
+    const base = this.role === "cop" ? COP_SPEED : SNATCHER_SPEED;
+    const speed = base * (this.hasEffect("speed") ? 1.7 : 1);
     if (move.lengthSq() > 0) move.normalize().multiplyScalar(speed);
     this.stepPlayer(move.x * dt, move.z * dt);
   }

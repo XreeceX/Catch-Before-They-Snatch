@@ -802,6 +802,215 @@ export class GameEngine {
       this.streetGroup.add(ben);
       this.colliders.push({ x: bx, z: bz, r: 5 });
     }
+
+    this.buildFarBankDecor(farZ);
+  }
+
+  /** Dress the far-bank plaza so it reads as a real London riverside square
+   *  rather than empty pavement: a backdrop terrace of Georgian townhouses,
+   *  London plane trees, Victorian lamp posts, red phone boxes and benches.
+   *  Everything is placed deterministically and kept clear of the central
+   *  walkable path between the bridge and the landmarks. */
+  private buildFarBankDecor(farZ: number): void {
+    const rng = mulberry32(0x10d0a);
+    const W = HALF_X - 0.6;
+    const backZ = FAR_BANK_MAX_Z;
+
+    // 1) Backdrop terrace of London townhouses along the rear edge, facing the
+    //    river so they frame the square behind the landmarks.
+    let z = -W + 4;
+    while (z < W - 4) {
+      const width = 9 + rng() * 5;
+      const house = this.makeTownhouse(width, 14 + rng() * 10, rng);
+      house.position.set(z + width / 2, 0, backZ + 4);
+      this.streetGroup.add(house);
+      z += width + 0.5;
+    }
+
+    // 2) Side terraces along the left/right edges of the plaza, facing inward.
+    for (const side of [-1, 1]) {
+      let sz = farZ + 14;
+      while (sz < backZ - 8) {
+        const width = 8 + rng() * 4;
+        const house = this.makeTownhouse(width, 12 + rng() * 8, rng);
+        house.rotation.y = side === -1 ? Math.PI / 2 : -Math.PI / 2;
+        house.position.set(side * (HALF_X + 3), 0, sz + width / 2);
+        this.streetGroup.add(house);
+        sz += width + 0.5;
+      }
+    }
+
+    // 3) A riverside promenade railing along the far shore, with a central gap
+    //    where the bridge lands.
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x1c2127, roughness: 0.6, metalness: 0.5 });
+    const gap = this.bridgeHalf + 1.5;
+    for (let rx = -W + 1; rx <= W - 1; rx += 2) {
+      if (Math.abs(rx) < gap) continue;
+      const postR = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1, 6), railMat);
+      postR.position.set(rx, 0.5, farZ + 0.6);
+      this.streetGroup.add(postR);
+    }
+    for (const sx of [-1, 1]) {
+      const railLen = W - gap;
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(railLen, 0.1, 0.1), railMat);
+      rail.position.set(sx * (gap + railLen / 2), 0.95, farZ + 0.6);
+      this.streetGroup.add(rail);
+    }
+
+    // 4) Plane trees, lamp posts, benches and phone boxes scattered around the
+    //    plaza edges, keeping the centre path clear.
+    const onPath = (x: number, zz: number): boolean =>
+      Math.abs(x) < this.bridgeHalf + 4 && zz < farZ + 40;
+    const placeRow = (zRow: number, make: (x: number, zz: number) => void) => {
+      for (let x = -W + 8; x <= W - 8; x += 11) {
+        const px = x + (rng() - 0.5) * 3;
+        if (onPath(px, zRow)) continue;
+        make(px, zRow + (rng() - 0.5) * 3);
+      }
+    };
+    placeRow(farZ + 8, (x, zz) => {
+      this.streetGroup.add(this.makeLamp(x, zz));
+      this.colliders.push({ x, z: zz, r: 0.4 });
+    });
+    placeRow(farZ + 26, (x, zz) => {
+      this.streetGroup.add(this.makeTree(x, zz, rng));
+      this.colliders.push({ x, z: zz, r: 1 });
+    });
+    placeRow(backZ - 14, (x, zz) => {
+      this.streetGroup.add(this.makeTree(x, zz, rng));
+      this.colliders.push({ x, z: zz, r: 1 });
+    });
+
+    // benches facing the river along the promenade
+    for (const x of [-W * 0.55, -W * 0.28, W * 0.28, W * 0.55]) {
+      const bz = farZ + 5;
+      this.streetGroup.add(this.makeBench(x, bz));
+      this.colliders.push({ x, z: bz, r: 0.8 });
+    }
+
+    // a couple of red phone boxes flanking the bridge exit
+    const generated = this.propModels.has("phonebox");
+    for (const sx of [-1, 1]) {
+      const px = sx * (this.bridgeHalf + 4);
+      const pz = farZ + 6;
+      const box = generated ? this.propModels.create("phonebox") : this.makePhoneBoxFallback();
+      if (!box) continue;
+      box.position.set(px, 0, pz);
+      box.rotation.y = Math.PI;
+      this.streetGroup.add(box);
+      this.colliders.push({ x: px, z: pz, r: 0.95 });
+    }
+  }
+
+  /** A Georgian/Victorian London terraced townhouse: brick facade with sash
+   *  windows, a pale cornice and a slate roof. Front faces +Z. */
+  private makeTownhouse(width: number, height: number, rng: () => number): THREE.Group {
+    const g = new THREE.Group();
+    const depth = 9;
+    const palettes: [string, string][] = [
+      ["#8a5a44", "#a8745a"],
+      ["#7a4a3c", "#9a6450"],
+      ["#caa777", "#e0c79a"],
+      ["#5e4640", "#7c5f55"],
+    ];
+    const pal = palettes[Math.floor(rng() * palettes.length)];
+    const tex = brickTexture(pal[0], pal[1]);
+    tex.repeat.set(Math.max(2, Math.round(width / 3)), Math.max(3, Math.round(height / 3)));
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(width, height, depth),
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95 }),
+    );
+    body.position.set(0, height / 2, 0);
+    body.castShadow = true;
+    body.receiveShadow = true;
+    g.add(body);
+
+    // pale stone cornice + parapet
+    const stone = new THREE.MeshStandardMaterial({ color: 0xd8d2c4, roughness: 0.9 });
+    const cornice = new THREE.Mesh(new THREE.BoxGeometry(width + 0.6, 0.8, depth + 0.6), stone);
+    cornice.position.set(0, height + 0.4, 0);
+    g.add(cornice);
+
+    // slate mansard roof
+    const roof = new THREE.Mesh(
+      new THREE.BoxGeometry(width, 2.2, depth),
+      new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.85 }),
+    );
+    roof.position.set(0, height + 1.9, 0);
+    g.add(roof);
+
+    // warm sash windows on the front face
+    const winMat = new THREE.MeshStandardMaterial({
+      color: 0xffe9b8,
+      emissive: 0xffc864,
+      emissiveIntensity: 0.5,
+      roughness: 0.4,
+    });
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0xf2efe6, roughness: 0.8 });
+    const rows = Math.max(2, Math.floor(height / 4));
+    const cols = Math.max(1, Math.floor(width / 3));
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const wx = -width / 2 + (c + 0.5) * (width / cols);
+        const wy = 2.2 + r * (height / rows);
+        if (wy > height - 1) continue;
+        const frame = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.1, 0.2), frameMat);
+        frame.position.set(wx, wy, depth / 2 + 0.02);
+        g.add(frame);
+        const win = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.7, 0.24), winMat);
+        win.position.set(wx, wy, depth / 2 + 0.04);
+        g.add(win);
+      }
+    }
+    return g;
+  }
+
+  /** A London plane tree: tapered trunk with a couple of leafy canopy clusters. */
+  private makeTree(x: number, z: number, rng: () => number): THREE.Group {
+    const g = new THREE.Group();
+    const h = 4.5 + rng() * 2.5;
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.18, 0.32, h, 7),
+      new THREE.MeshStandardMaterial({ color: 0x6e5944, roughness: 0.95 }),
+    );
+    trunk.position.y = h / 2;
+    trunk.castShadow = true;
+    g.add(trunk);
+    const leafMat = new THREE.MeshStandardMaterial({ color: 0x4f7a3a, roughness: 1 });
+    const leafMat2 = new THREE.MeshStandardMaterial({ color: 0x5f8c45, roughness: 1 });
+    for (let i = 0; i < 4; i++) {
+      const rad = 1.6 + rng() * 1;
+      const blob = new THREE.Mesh(
+        new THREE.SphereGeometry(rad, 8, 7),
+        i % 2 === 0 ? leafMat : leafMat2,
+      );
+      blob.position.set((rng() - 0.5) * 2, h + (rng() - 0.3) * 1.6, (rng() - 0.5) * 2);
+      blob.castShadow = true;
+      g.add(blob);
+    }
+    g.position.set(x, 0, z);
+    return g;
+  }
+
+  /** A simple slatted park bench. Front (seat opening) faces -Z toward the river. */
+  private makeBench(x: number, z: number): THREE.Group {
+    const g = new THREE.Group();
+    const woodA = new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.9 });
+    const ironMat = new THREE.MeshStandardMaterial({ color: 0x23282e, roughness: 0.6, metalness: 0.5 });
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.12, 0.7), woodA);
+    seat.position.y = 0.55;
+    seat.castShadow = true;
+    g.add(seat);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.6, 0.12), woodA);
+    back.position.set(0, 0.9, 0.32);
+    g.add(back);
+    for (const lx of [-1, 1]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.55, 0.7), ironMat);
+      leg.position.set(lx * 1.05, 0.27, 0);
+      g.add(leg);
+    }
+    g.position.set(x, 0, z);
+    return g;
   }
 
   /** A clean stone bridge deck across the river at walking height, with solid

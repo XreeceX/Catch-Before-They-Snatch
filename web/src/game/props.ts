@@ -12,6 +12,9 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 export type PropKind =
   | "buildingA"
   | "buildingB"
+  | "buildingTall"
+  | "buildingWide"
+  | "buildingModern"
   | "lamp"
   | "crate"
   | "road"
@@ -42,6 +45,10 @@ interface PropDef {
 const R2 = "https://r2-pub.rork.com/generated-3d-models/yfgqeifpmt8941tk7v8l3";
 const BUILDING_A = `${R2}/d76fd982-7ff6-4ba0-a8ae-66528e342aa7`;
 const BUILDING_B = `${R2}/1a48df9f-9858-4fb6-a449-4e0d1c733cb8`;
+// New London building variants (filled in after Meshy generation completes).
+const BUILDING_TALL = `PENDING_tall`;
+const BUILDING_WIDE = `PENDING_wide`;
+const BUILDING_MODERN = `PENDING_modern`;
 const LAMP = `${R2}/7ed69813-75a1-484b-81eb-9242e1788e66`;
 const CRATE = `${R2}/ac60ef7f-de27-41af-9b1b-172c714e7d1b`;
 // Wet London street paving (replaces the older road slab for a better surface).
@@ -67,6 +74,9 @@ function pending(url: string): boolean {
 const PROPS: Record<PropKind, PropDef> = {
   buildingA: { url: `${BUILDING_A}.glb`, fit: "height", size: 18, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   buildingB: { url: `${BUILDING_B}.glb`, fit: "height", size: 18, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
+  buildingTall: { url: `${BUILDING_TALL}.glb`, fit: "height", size: 26, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
+  buildingWide: { url: `${BUILDING_WIDE}.glb`, fit: "height", size: 14, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
+  buildingModern: { url: `${BUILDING_MODERN}.glb`, fit: "height", size: 20, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   lamp: { url: `${LAMP}.glb`, fit: "height", size: 6, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   crate: { url: `${CRATE}.glb`, fit: "longest", size: 1.3, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   road: { url: `${ROAD}.glb`, fit: "longest", size: 12, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },

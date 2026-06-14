@@ -828,12 +828,34 @@ export class GameEngine {
     }
 
     // 2) Side terraces along the left/right edges of the plaza, facing inward.
+    //    Mix the generated Meshy buildings (varied heights/widths) with the
+    //    procedural townhouses so the rows no longer look repetitive.
+    const variants: PropKind[] = ["buildingTall", "buildingWide", "buildingModern"];
+    const haveVariants = variants.filter((k) => this.propModels.has(k));
     for (const side of [-1, 1]) {
+      const yaw = side === -1 ? Math.PI / 2 : -Math.PI / 2;
       let sz = farZ + 14;
+      let i = Math.floor(rng() * 3);
       while (sz < backZ - 8) {
+        // Every other slot, drop in a generated Meshy building if one is loaded.
+        const useMeshy = haveVariants.length > 0 && rng() < 0.6;
+        if (useMeshy) {
+          const kind = haveVariants[i % haveVariants.length];
+          i += 1;
+          const dims = this.propModels.dims(kind);
+          const b = this.propModels.create(kind);
+          if (b) {
+            const width = dims.x || 12;
+            b.rotation.y = yaw;
+            b.position.set(side * (HALF_X + (dims.z || 8) / 2 + 1), 0, sz + width / 2);
+            this.streetGroup.add(b);
+            sz += width + 0.6;
+            continue;
+          }
+        }
         const width = 8 + rng() * 4;
         const house = this.makeTownhouse(width, 12 + rng() * 8, rng);
-        house.rotation.y = side === -1 ? Math.PI / 2 : -Math.PI / 2;
+        house.rotation.y = yaw;
         house.position.set(side * (HALF_X + 3), 0, sz + width / 2);
         this.streetGroup.add(house);
         sz += width + 0.5;

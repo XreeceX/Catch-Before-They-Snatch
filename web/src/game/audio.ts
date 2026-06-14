@@ -16,7 +16,8 @@ export type SfxName =
   | "game_start"
   | "time_warning"
   | "apprehend"
-  | "smoke_deploy";
+  | "smoke_deploy"
+  | "bus_horn";
 
 const SFX_URL: Record<SfxName, string> = {
   scream_male: `${BASE}/5eb9c27d-c214-43f4-aee8-1dc403d11711.mp3`,
@@ -27,6 +28,7 @@ const SFX_URL: Record<SfxName, string> = {
   time_warning: `${BASE}/7252341b-d388-446b-aa0a-8b273a905e8f.mp3`,
   apprehend: `${BASE}/f7992670-11d9-48d0-a9ff-2b2242f8764d.mp3`,
   smoke_deploy: `${BASE}/82ef3149-3fc3-465f-9526-c092fabad469.mp3`,
+  bus_horn: `${BASE}/4af99966-63cf-4079-9523-0081a6d9ec87.mp3`,
 };
 
 /** Per-sound base volume so screams don't bury UI chimes. */
@@ -39,6 +41,7 @@ const SFX_GAIN: Record<SfxName, number> = {
   time_warning: 0.6,
   apprehend: 0.85,
   smoke_deploy: 0.85,
+  bus_horn: 0.7,
 };
 
 /** Small pool per sound so rapid repeats (e.g. two snatches) overlap cleanly. */

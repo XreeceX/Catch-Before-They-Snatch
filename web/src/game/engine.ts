@@ -415,6 +415,7 @@ export class GameEngine {
   private powerups: Powerup[] = [];
   private traps: TrapEntity[] = [];
   private buses: THREE.Group[] = [];
+  private busHornCooldown = 0;
   private thamesWater: THREE.Mesh | null = null;
 
   // collision: cylindrical colliders for solid static props (phone boxes,
@@ -2305,11 +2306,23 @@ export class GameEngine {
   }
 
   private updateBuses(dt: number): void {
+    if (this.busHornCooldown > 0) this.busHornCooldown -= dt;
+    let nearest = Infinity;
     for (const bus of this.buses) {
       bus.position.z += dt * 5;
       // The riverside end is open (no tunnel), so recycle buses just before the
       // embankment and respawn them hidden deep inside the south tunnel throat.
       if (bus.position.z > RIVER_NEAR - 6) bus.position.z = -HALF_Z - 14;
+      const dx = bus.position.x - this.playerPos.x;
+      const dz = bus.position.z - this.playerPos.z;
+      const d = Math.hypot(dx, dz);
+      if (d < nearest) nearest = d;
+    }
+    // Honk when the player walks close to a passing bus (rate-limited so it
+    // doesn't blare continuously while standing near the lane).
+    if (nearest < 7 && this.busHornCooldown <= 0) {
+      this.audio.play("bus_horn", Math.max(0.4, 1 - nearest / 7));
+      this.busHornCooldown = 3.5;
     }
   }
 

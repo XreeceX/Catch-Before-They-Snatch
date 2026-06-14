@@ -579,23 +579,75 @@ export class GameEngine {
     this.rebuildBuses();
   }
 
-  /** A single stone hillside tunnel portal at the south end of the street that
+  /** A modern urban concrete road tunnel at the south end of the street that
    *  buses drive out of, so traffic no longer pops out of thin air. The
    *  riverside end is left open so the Big Ben / London Eye skyline stays in
-   *  full view. Uses the generated Meshy portal when loaded, otherwise a
-   *  procedural stone arch fallback. */
+   *  full view. Built procedurally so it's correctly proportioned to the
+   *  street width and never distorts. */
   private buildTunnels(): void {
     const portalZ = -HALF_Z + 2;
-    const model = this.propModels.has("tunnel") ? this.propModels.create("tunnel") : null;
-    if (model) {
-      // The model's dark mouth faces +Z (into the play area). Push it back so
-      // the portal straddles the map edge and buses emerge from shadow.
-      model.position.set(0, 0, portalZ - 4);
-      this.streetGroup.add(model);
-    } else {
-      this.buildTunnelFallback(portalZ);
-    }
     this.buildTunnelInterior(portalZ);
+    this.buildModernTunnelFacade(portalZ);
+  }
+
+  /** Clean modern concrete tunnel face: a low header beam over the road, a
+   *  ribbed facade wall above it, side abutments and slim trim framing the
+   *  dark mouth. Proportioned to the road so it reads as a real city tunnel. */
+  private buildModernTunnelFacade(portalZ: number): void {
+    const W = HALF_X - 0.6; // road half-width
+    const openH = 10; // clearance height of the mouth (buses pass easily)
+    const wallTop = 17; // top of the facade wall
+    const headerH = 1.8;
+
+    const concrete = new THREE.MeshStandardMaterial({ color: 0x9ca0a5, roughness: 0.92, metalness: 0.04 });
+    const concreteDark = new THREE.MeshStandardMaterial({ color: 0x7d8187, roughness: 0.95 });
+    const trim = new THREE.MeshStandardMaterial({ color: 0xc6cace, roughness: 0.8 });
+
+    const g = new THREE.Group();
+
+    // Header beam spanning the top of the opening.
+    const header = new THREE.Mesh(new THREE.BoxGeometry(W * 2 + 4, headerH, 3), concrete);
+    header.position.set(0, openH + headerH / 2, 0);
+    header.castShadow = true;
+    header.receiveShadow = true;
+    g.add(header);
+
+    // Facade wall above the header.
+    const wallH = wallTop - (openH + headerH);
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(W * 2 + 4, wallH, 2.2), concrete);
+    wall.position.set(0, openH + headerH + wallH / 2, 0);
+    wall.castShadow = true;
+    wall.receiveShadow = true;
+    g.add(wall);
+
+    // Slim bright trim band just above the mouth (modern detail line).
+    const band = new THREE.Mesh(new THREE.BoxGeometry(W * 2 + 5, 0.45, 3.1), trim);
+    band.position.set(0, openH + headerH + 0.25, 0);
+    g.add(band);
+
+    // Vertical ribs across the facade wall for an urban concrete look.
+    const ribCount = 9;
+    for (let i = 0; i < ribCount; i++) {
+      const rx = -W + 1 + (i / (ribCount - 1)) * (W * 2 - 2);
+      const rib = new THREE.Mesh(new THREE.BoxGeometry(0.5, wallH - 0.6, 0.5), concreteDark);
+      rib.position.set(rx, openH + headerH + wallH / 2, 1.2);
+      g.add(rib);
+    }
+
+    // Side abutment walls and vertical edge trim framing the mouth.
+    for (const side of [-1, 1]) {
+      const ab = new THREE.Mesh(new THREE.BoxGeometry(5, wallTop, 4), concreteDark);
+      ab.position.set(side * (W + 2.4), wallTop / 2, 0);
+      ab.castShadow = true;
+      ab.receiveShadow = true;
+      g.add(ab);
+      const jamb = new THREE.Mesh(new THREE.BoxGeometry(0.7, openH + headerH, 3.2), trim);
+      jamb.position.set(side * (W + 0.1), (openH + headerH) / 2, 0);
+      g.add(jamb);
+    }
+
+    g.position.z = portalZ;
+    this.streetGroup.add(g);
   }
 
   /** Pitch-black recessed interior (floor, ceiling, side walls and back wall)
@@ -611,19 +663,19 @@ export class GameEngine {
     const floor = new THREE.Mesh(new THREE.BoxGeometry(W * 2, 0.2, depth), black);
     floor.position.set(0, 0.12, cz);
     g.add(floor);
-    // ceiling
+    // ceiling (bottom sits at the mouth clearance height)
     const ceiling = new THREE.Mesh(new THREE.BoxGeometry(W * 2, 0.8, depth), black);
-    ceiling.position.set(0, 13.5, cz);
+    ceiling.position.set(0, 10.4, cz);
     g.add(ceiling);
     // side walls
     for (const side of [-1, 1]) {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(1.2, 14, depth), black);
-      wall.position.set(side * W, 7, cz);
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(1.2, 12, depth), black);
+      wall.position.set(side * W, 6, cz);
       g.add(wall);
     }
     // back wall sealing the far end of the throat
-    const back = new THREE.Mesh(new THREE.BoxGeometry(W * 2, 14, 1.2), black);
-    back.position.set(0, 7, cz - depth / 2);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(W * 2, 12, 1.2), black);
+    back.position.set(0, 6, cz - depth / 2);
     g.add(back);
     this.streetGroup.add(g);
 
@@ -632,42 +684,6 @@ export class GameEngine {
     for (let x = -W; x <= W; x += r * 1.5) {
       this.colliders.push({ x, z: portalZ + 1.5, r });
     }
-  }
-
-  /** Procedural stone arch portal used until the generated tunnel model loads. */
-  private buildTunnelFallback(portalZ: number): void {
-    const W = HALF_X - 0.6;
-    const stone = new THREE.MeshStandardMaterial({ color: 0x70757b, roughness: 0.95 });
-    const trim = new THREE.MeshStandardMaterial({ color: 0x595d63, roughness: 0.95 });
-    const dark = new THREE.MeshStandardMaterial({ color: 0x07090d, roughness: 1 });
-    const throat = 18;
-    const g = new THREE.Group();
-    for (const side of [-1, 1]) {
-      const pillar = new THREE.Mesh(new THREE.BoxGeometry(6, 13, 8), stone);
-      pillar.position.set(side * (W - 2), 6.5, 0);
-      pillar.castShadow = true;
-      pillar.receiveShadow = true;
-      g.add(pillar);
-    }
-    const lintel = new THREE.Mesh(new THREE.BoxGeometry(W * 2 + 4, 4, 9), stone);
-    lintel.position.set(0, 12.5, 0);
-    lintel.castShadow = true;
-    g.add(lintel);
-    const band = new THREE.Mesh(new THREE.BoxGeometry(W * 2 + 2, 1, 9.6), trim);
-    band.position.set(0, 10.2, 0);
-    g.add(band);
-    // dark recessed throat (ceiling + side walls) extending behind the map edge.
-    const cz = -(throat / 2 + 2);
-    const ceiling = new THREE.Mesh(new THREE.BoxGeometry(W * 2, 0.8, throat), dark);
-    ceiling.position.set(0, 9.4, cz);
-    g.add(ceiling);
-    for (const side of [-1, 1]) {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(1, 10, throat), dark);
-      wall.position.set(side * W, 5, cz);
-      g.add(wall);
-    }
-    g.position.z = portalZ;
-    this.streetGroup.add(g);
   }
 
   /** Scatter classic red telephone boxes along both pavements. */

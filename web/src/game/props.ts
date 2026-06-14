@@ -21,7 +21,6 @@ export type PropKind =
   | "londonEye"
   | "bigBen"
   | "bridge"
-  | "tunnel"
   | "smartphone";
 
 type AxisKey =
@@ -59,8 +58,6 @@ const PHONEBOX = `${R2}/11364c24-5c42-4181-aca4-3cd935fad8b1`;
 const LONDON_EYE = `${R2}/c81e9a27-9a5e-48ad-882e-22ed3dcdda2f`;
 const BIG_BEN = `${R2}/ceb61531-356b-415e-93fa-f69f40a0ca52`;
 const SMARTPHONE = `${R2}/a624a58d-14d8-4bd7-8f42-74fb0da5c376`;
-// Modern urban concrete city road tunnel portal.
-const TUNNEL = `${R2}/2588102a-347f-4e70-98f8-b4a43e038e45`;
 
 /** A url that has not yet been wired to a real generated GLB. */
 function pending(url: string): boolean {
@@ -77,8 +74,6 @@ const PROPS: Record<PropKind, PropDef> = {
   pavement: { url: `${PAVEMENT}.glb`, fit: "longest", size: 6, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   // Directionless; sized so its longest (deck) axis fills the river crossing.
   bridge: { url: `${BRIDGE}.glb`, fit: "longest", size: 62, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
-  // Concrete city tunnel portal spanning the street; the dark mouth faces the play area (+Z).
-  tunnel: { url: `${TUNNEL}.glb`, fit: "longest", size: 96, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
   // Bus front faces -X; buses travel toward +Z, so the correction maps -X → +Z.
   bus: { url: `${BUS}.glb`, fit: "longest", size: 12, localFrontAxis: "negativeX", localUpAxis: "positiveY" },
   phonebox: { url: `${PHONEBOX}.glb`, fit: "height", size: 2.6, localFrontAxis: "positiveZ", localUpAxis: "positiveY" },
